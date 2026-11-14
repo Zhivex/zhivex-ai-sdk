@@ -1,0 +1,79 @@
+{
+  "baselineRef": null,
+  "runtime": "1.4.3",
+  "warmups": 2,
+  "samples": 5,
+  "chunkBytes": 64,
+  "objects": [
+    {
+      "size": 16384,
+      "snapshotIntervalChars": 1,
+      "medianMs": 1.441,
+      "serializedBytes": 2211642,
+      "events": 518
+    },
+    {
+      "size": 16384,
+      "snapshotIntervalChars": 4096,
+      "medianMs": 0.472,
+      "serializedBytes": 132642,
+      "events": 266
+    },
+    {
+      "size": 32768,
+      "snapshotIntervalChars": 1,
+      "medianMs": 3.184,
+      "serializedBytes": 8617274,
+      "events": 1030
+    },
+    {
+      "size": 32768,
+      "snapshotIntervalChars": 4096,
+      "medianMs": 0.618,
+      "serializedBytes": 330506,
+      "events": 526
+    },
+    {
+      "size": 65536,
+      "snapshotIntervalChars": 1,
+      "medianMs": 9.44,
+      "serializedBytes": 34011450,
+      "events": 2054
+    },
+    {
+      "size": 65536,
+      "snapshotIntervalChars": 4096,
+      "medianMs": 1.4,
+      "serializedBytes": 922842,
+      "events": 1046
+    }
+  ],
+  "sse": [
+    {
+      "size": 131072,
+      "medianMs": 0.546
+    },
+    {
+      "size": 262144,
+      "medianMs": 0.862
+    },
+    {
+      "size": 524288,
+      "medianMs": 1.815
+    }
+  ],
+  "cache": [
+    {
+      "bounded": false,
+      "medianMs": 1.198,
+      "retainedEntries": 2000,
+      "retainedSerializedBytes": 2085780
+    },
+    {
+      "bounded": true,
+      "medianMs": 1.904,
+      "retainedEntries": 128,
+      "retainedSerializedBytes": 133632
+    }
+  ]
+}

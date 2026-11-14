@@ -152,7 +152,13 @@ describe("sandbox network allowlist", () => {
     expect(plain.status).toBe(405);
     await denied.close();
 
-    const target = createServer(socket => socket.end("ok"));
+    const targetErrors: NodeJS.ErrnoException[] = [];
+    const target = createServer(socket => {
+      // connectStatus destroys the tunnel after reading its HTTP status, before
+      // consuming this payload. The fixture peer may consequently see a reset.
+      socket.on("error", error => targetErrors.push(error));
+      socket.end("ok");
+    });
     await new Promise<void>(resolve => target.listen(0, "127.0.0.1", () => resolve()));
     const port = (target.address() as { port: number }).port;
     const allowed = await startAllowlistProxy({
@@ -163,6 +169,7 @@ describe("sandbox network allowlist", () => {
     expect(await connectStatus(allowed.port, "example.test", port)).toBe(200);
     await allowed.close();
     await new Promise<void>(resolve => target.close(() => resolve()));
+    for (const error of targetErrors) expect(error.code).toBe("ECONNRESET");
   });
 
   it("fails closed when connection, in-flight, request, or byte quotas are exhausted", async () => {

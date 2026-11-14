@@ -84,113 +84,106 @@ const parseObject = <TSchema extends ZodTypeAny>(
   return parsed.data;
 };
 
-const repairPartialJson = (text: string): string | undefined => {
-  const start = text.search(/[{\[]/);
-  if (start === -1) {
-    return undefined;
-  }
-
-  const slice = text.slice(start).trim();
-  if (!slice) {
-    return undefined;
-  }
-
+// Keep lexical repair state between deltas; completed prefixes need not be rescanned.
+const createPartialObjectParser = () => {
   const closers: string[] = [];
   let inString = false;
   let isEscaped = false;
   let lastToken: "value" | "colon" | "comma" | "other" = "other";
-
-  for (const char of slice) {
-    if (inString) {
-      if (isEscaped) {
-        isEscaped = false;
-        continue;
+  let start = -1;
+  let scanned = 0;
+  return (text: string): unknown | undefined => {
+    if (start === -1) {
+      const offset = text.slice(scanned).search(/[{\[]/);
+      if (offset === -1) {
+        scanned = text.length;
+        return undefined;
       }
+      start = scanned + offset;
+      scanned = start;
+    }
+    for (const char of text.slice(scanned)) {
+      if (inString) {
+        if (isEscaped) {
+          isEscaped = false;
+          continue;
+        }
 
-      if (char === "\\") {
-        isEscaped = true;
+        if (char === "\\") {
+          isEscaped = true;
+          continue;
+        }
+
+        if (char === "\"") {
+          inString = false;
+          lastToken = "value";
+        }
+
         continue;
       }
 
       if (char === "\"") {
-        inString = false;
+        inString = true;
+        continue;
+      }
+
+      if (char === "{") {
+        closers.push("}");
+        lastToken = "other";
+        continue;
+      }
+
+      if (char === "[") {
+        closers.push("]");
+        lastToken = "other";
+        continue;
+      }
+
+      if (char === "}" || char === "]") {
+        if (closers.at(-1) === char) {
+          closers.pop();
+        }
+        lastToken = "value";
+        continue;
+      }
+
+      if (char === ":") {
+        lastToken = "colon";
+        continue;
+      }
+
+      if (char === ",") {
+        lastToken = "comma";
+        continue;
+      }
+
+      if (/\S/.test(char)) {
         lastToken = "value";
       }
-
-      continue;
     }
 
-    if (char === "\"") {
-      inString = true;
-      continue;
+    scanned = text.length;
+    let repaired = text.slice(start).trim();
+
+    if (inString) {
+      repaired += "\"";
     }
 
-    if (char === "{") {
-      closers.push("}");
-      lastToken = "other";
-      continue;
+    if (lastToken === "colon") {
+      repaired += " null";
     }
 
-    if (char === "[") {
-      closers.push("]");
-      lastToken = "other";
-      continue;
+    if (lastToken === "comma") {
+      repaired = repaired.replace(/,\s*$/, "");
     }
 
-    if (char === "}" || char === "]") {
-      if (closers.at(-1) === char) {
-        closers.pop();
-      }
-      lastToken = "value";
-      continue;
+    try {
+      return JSON.parse(repaired + [...closers].reverse().join(""));
+    } catch {
+      return undefined;
     }
-
-    if (char === ":") {
-      lastToken = "colon";
-      continue;
-    }
-
-    if (char === ",") {
-      lastToken = "comma";
-      continue;
-    }
-
-    if (/\S/.test(char)) {
-      lastToken = "value";
-    }
-  }
-
-  let repaired = slice.trimEnd();
-
-  if (inString) {
-    repaired += "\"";
-  }
-
-  if (lastToken === "colon") {
-    repaired += " null";
-  }
-
-  if (lastToken === "comma") {
-    repaired = repaired.replace(/,\s*$/, "");
-  }
-
-  return repaired + [...closers].reverse().join("");
+  };
 };
-
-const parsePartialObject = (text: string): unknown | undefined => {
-  const repaired = repairPartialJson(text);
-  if (!repaired) {
-    return undefined;
-  }
-
-  try {
-    return JSON.parse(repaired);
-  } catch {
-    return undefined;
-  }
-};
-
-const sameJson = (left: unknown, right: unknown) => JSON.stringify(left) === JSON.stringify(right);
 
 const getStructuredOutput = <TSchema extends ZodTypeAny>(
   options: GenerateObjectOptions<TSchema>,
@@ -216,6 +209,7 @@ const createObjectOptions = <TSchema extends ZodTypeAny>(
   // Preserve policies, hooks, tool context and retry controls from GenerateTextOptions.
   const {
     schema: _schema, mode: _mode, schemaName: _name, schemaDescription: _description,
+    snapshotIntervalChars: _snapshotInterval,
     prompt: _prompt, messages: _messages, ...requestBase
   } = options;
 
@@ -267,6 +261,10 @@ export const generateObject = async <TSchema extends ZodTypeAny>(
 };
 
 export const streamObject = <TSchema extends ZodTypeAny>(options: GenerateObjectOptions<TSchema>): StreamObjectResult<TSchema> => {
+  const snapshotInterval = options.snapshotIntervalChars ?? 1;
+  if (!Number.isSafeInteger(snapshotInterval) || snapshotInterval < 1) {
+    throw new ValidationError('snapshotIntervalChars must be a positive safe integer.');
+  }
   const { objectMode, request } = createObjectOptions(withResolvedModel(options));
   const streamResult = streamText(request);
 
@@ -283,7 +281,22 @@ export const streamObject = <TSchema extends ZodTypeAny>(options: GenerateObject
 
   const finalResultPromise = (async () => {
     let text = "";
-    let lastPartial: Partial<GenerateObjectOutput<TSchema>["object"]> | undefined;
+    let lastPartialJson: string | undefined;
+    const parsePartialObject = createPartialObjectParser();
+    let pendingDelta = "";
+    const publishSnapshot = async () => {
+      await broadcast.publish({ type: "object-delta", textDelta: pendingDelta, partialText: text });
+      pendingDelta = "";
+      const partial = parsePartialObject(text) as PartialObject | undefined;
+      if (partial !== undefined) {
+        const serialized = JSON.stringify(partial);
+        if (serialized !== lastPartialJson) {
+          lastPartialJson = serialized;
+          await broadcast.publish({ type: "object-partial", partialObject: partial });
+          await partialBroadcast.publish(partial);
+        }
+      }
+    };
 
     for await (const event of streamResult.eventStream) {
       await broadcast.publish(event);
@@ -293,20 +306,12 @@ export const streamObject = <TSchema extends ZodTypeAny>(options: GenerateObject
       }
 
       text += event.textDelta;
-      await broadcast.publish({
-        type: "object-delta",
-        textDelta: event.textDelta,
-        partialText: text
-      });
-
-      const partial = parsePartialObject(text) as Partial<GenerateObjectOutput<TSchema>["object"]> | undefined;
-      if (partial !== undefined && !sameJson(partial, lastPartial)) {
-        lastPartial = partial;
-        await broadcast.publish({ type: "object-partial", partialObject: partial });
-        await partialBroadcast.publish(partial);
-
+      pendingDelta += event.textDelta;
+      if (pendingDelta.length >= snapshotInterval || (snapshotInterval === 1 && !event.textDelta)) {
+        await publishSnapshot();
       }
     }
+    if (pendingDelta) await publishSnapshot();
 
     const textResult = await streamResult.collect();
     const object = parseObject(textResult.text, options.schema);

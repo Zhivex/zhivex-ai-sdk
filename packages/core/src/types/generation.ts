@@ -253,6 +253,9 @@ export type GenerateObjectOptions<
   mode?: StructuredOutputMode;
   schemaName?: string;
   schemaDescription?: string;
+  /** Minimum new characters between object snapshots and partial parsing. Defaults to 1.
+   * Text deltas remain unchanged; a final pending snapshot is always flushed. */
+  snapshotIntervalChars?: number;
 };
 
 export interface GenerateObjectOutput<TSchema extends ZodTypeAny> extends GenerateTextOutput {

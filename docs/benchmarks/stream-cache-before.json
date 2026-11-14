@@ -1,0 +1,79 @@
+{
+  "baselineRef": "d3c8b682adca2df904f4f49523f34d3db183b531",
+  "runtime": "1.4.3",
+  "warmups": 2,
+  "samples": 5,
+  "chunkBytes": 64,
+  "objects": [
+    {
+      "size": 16384,
+      "snapshotIntervalChars": 1,
+      "medianMs": 7.889,
+      "serializedBytes": 2211642,
+      "events": 518
+    },
+    {
+      "size": 16384,
+      "snapshotIntervalChars": 4096,
+      "medianMs": 7.472,
+      "serializedBytes": 2211642,
+      "events": 518
+    },
+    {
+      "size": 32768,
+      "snapshotIntervalChars": 1,
+      "medianMs": 27.655,
+      "serializedBytes": 8617274,
+      "events": 1030
+    },
+    {
+      "size": 32768,
+      "snapshotIntervalChars": 4096,
+      "medianMs": 27.666,
+      "serializedBytes": 8617274,
+      "events": 1030
+    },
+    {
+      "size": 65536,
+      "snapshotIntervalChars": 1,
+      "medianMs": 109.795,
+      "serializedBytes": 34011450,
+      "events": 2054
+    },
+    {
+      "size": 65536,
+      "snapshotIntervalChars": 4096,
+      "medianMs": 106.639,
+      "serializedBytes": 34011450,
+      "events": 2054
+    }
+  ],
+  "sse": [
+    {
+      "size": 131072,
+      "medianMs": 8.987
+    },
+    {
+      "size": 262144,
+      "medianMs": 33.425
+    },
+    {
+      "size": 524288,
+      "medianMs": 125.179
+    }
+  ],
+  "cache": [
+    {
+      "bounded": false,
+      "medianMs": 1.902,
+      "retainedEntries": 2000,
+      "retainedSerializedBytes": 2085780
+    },
+    {
+      "bounded": true,
+      "medianMs": 1.652,
+      "retainedEntries": 2000,
+      "retainedSerializedBytes": 2085780
+    }
+  ]
+}

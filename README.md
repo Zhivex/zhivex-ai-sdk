@@ -90,6 +90,19 @@ Server runtimes only: Node.js, Bun, route handlers, or workers. Browser clients 
 
 Human approval queues (`createAgentApprovalQueue`) are (beta).
 
+## Streaming and cache tuning
+
+`streamObject({ ..., snapshotIntervalChars: 4096 })` groups object snapshots and
+partial parsing while preserving every `text-delta`, the final pending snapshot,
+and final schema validation. The default is `1`, preserving the existing event
+frequency and shapes. This reduces repeated JSON work and serialized snapshot
+traffic; it trades intermediate object updates for lower overhead.
+
+`createInMemoryGenerateCache({ maxEntries: 1000, maxBytes: 16 * 1024 * 1024, ttlMs: 60_000 })`
+adds LRU eviction and expiration. All limits are optional; calling it without
+arguments preserves unlimited retention. See [performance tuning and measured
+benchmarks](./docs/PERFORMANCE.md) for semantics and reproducible comparisons.
+
 ## Providers
 
 Capability differs by adapter. Tiers describe agent support in this SDK:

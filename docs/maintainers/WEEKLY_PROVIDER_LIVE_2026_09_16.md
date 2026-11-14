@@ -29,21 +29,20 @@ Calls have deadlines and no automatic provider retries. Managed Anthropic sessio
 
 OpenAI uses `gpt-6-astra` with `environment.type: "none"`; no hosted sandbox or remote tools are certified. Anthropic uses `claude-opus-5`. Gemini exercises text-to-tool-to-audio, not microphone input or voice quality. DeepSeek/Qwen tests do not certify every tool, structured-output, file, or streaming combination.
 
-## Findings and attempt history
+## Recorded result
 
-Initial evidence is retained, including failures; a later pass does not erase earlier outcomes.
+On September 16, 2026, the consolidated local installed-tarball run passed **11/11 cases** with no cleanup errors. This is historical evidence, not current certification, npm publication or a stability promotion. Earlier failures remain available below.
 
-- [Initial run](../evidence/weekly-provider-live-2026-09-16.json): Gemini Extended Thinking reached the 55-second deadline. Its [isolated recheck](../evidence/weekly-provider-live-2026-09-16-gemini-recheck.json) completed with `IDLE`; no protocol change was needed for that recheck.
-- The first compaction fixture exposed a local assistant-prefill rejection. The adapter now permits a completed assistant turn when explicitly summarizing; ordinary generation still rejects unsupported prefills. A [custom synthetic-reference prompt returned refusal](../evidence/weekly-provider-live-2026-09-16-compaction-diagnostic.json); it is not counted as success. The [recipe-history case](../evidence/weekly-provider-live-2026-09-16-compaction-final.json) passed summary and replay.
-- The [Anthropic stream run](../evidence/weekly-provider-live-2026-09-16-anthropic-final.json) passed both compaction modes but exposed a test-cleanup error: agent definitions require `archive`. [Recovery evidence](../evidence/weekly-provider-live-2026-09-16-cleanup.json) confirms both affected definitions were archived. The [complete managed-agent recheck](../evidence/weekly-provider-live-2026-09-16-managed-final.json) passed tool-result, idle, and cleanup assertions.
-- The [OpenAI cancellation diagnostic](../evidence/weekly-provider-live-2026-09-16-openai-cancel-diagnostic.json) exposed empty HTTP 202 acknowledgements on event submission. The native client now accepts those acknowledgements instead of attempting to parse empty JSON, with a regression test. An earlier fixture also established that conversation-only session creation requires initial input.
+The narrative findings and attempt history are in the [internal historical archive in Notion](https://www.notion.so/418777b104f681a089c1c27e90679725). Public evidence and reproduction remain in this repository.
 
-## Final result
+## Evidence
 
-[Consolidated evidence](../evidence/weekly-provider-live-2026-09-16-consolidated.json): **11/11 cases passed**, September 16, 2026, 21:10–21:11 ART (September 17, 00:10–00:11 UTC). No cleanup errors remained in that run. Earlier leaked test definitions were archived as shown in the recovery report. All seven recorded entry hashes match the final local build.
-
-The DeepSeek service returned `deepseek-flash` for all three requested aliases. Gemini Extended Thinking emitted `IN_PROGRESS`, then `IDLE`, and completed exactly one tool cycle. OpenAI accepted both message submission and cancellation with empty HTTP 202 responses; the event stream confirmed `agent.session.turn.cancelled`. Anthropic confirmed a matching successful tool result, final response, and idle state before cleanup.
-
-Local validation: `bun run docs:check`, `bun run typecheck`, `bun run build`, `bun run test` (1,838 tests / 132 files), `git diff --check`, and the secret scan passed. A separate check found no configured credential values in the evidence files. The live opt-in guard was also verified to fail before network activity when unset.
-
-The runner and evidence are ready for review. These changes are not committed, pushed, versioned, or published. A release must certify its own immutable, newly versioned artifacts; this report does not certify existing npm bytes or imply a package-wide stability promotion.
+- [Initial run](../evidence/weekly-provider-live-2026-09-16.json)
+- [isolated recheck](../evidence/weekly-provider-live-2026-09-16-gemini-recheck.json)
+- [custom synthetic-reference prompt returned refusal](../evidence/weekly-provider-live-2026-09-16-compaction-diagnostic.json)
+- [recipe-history case](../evidence/weekly-provider-live-2026-09-16-compaction-final.json)
+- [Anthropic stream run](../evidence/weekly-provider-live-2026-09-16-anthropic-final.json)
+- [Recovery evidence](../evidence/weekly-provider-live-2026-09-16-cleanup.json)
+- [complete managed-agent recheck](../evidence/weekly-provider-live-2026-09-16-managed-final.json)
+- [OpenAI cancellation diagnostic](../evidence/weekly-provider-live-2026-09-16-openai-cancel-diagnostic.json)
+- [Consolidated evidence](../evidence/weekly-provider-live-2026-09-16-consolidated.json)

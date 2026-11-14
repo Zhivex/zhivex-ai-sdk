@@ -6,55 +6,15 @@ Start with the [Agents guide](../AGENTS.md), [Workflows guide](../WORKFLOWS.md),
 
 ## Agent Runtime
 
-For reusable multi-step assistants, `Agent` is the stable agent-first API. It wraps the shared tool loop and exposes `run()`, `stream()`, `resume()`, and `toDefinition()` while preserving the same serializable state contract used by `createAgent()` and `runAgent()`.
+The [entry-point guide](../AGENTS.md#choose-the-entry-point) defines when to use `Agent`, `createAgent()` and the focused package. See the [runtime contract](../AGENTS.md#runtime-contract) for state, persistence and guarantees, and [tools and safety](../AGENTS.md#tools-and-safety) for the introductory tool example.
 
-Relevant runnable examples:
+`Agent.toDefinition()` exposes the reusable definition for functional helpers. The legacy `suspended` state is accepted when loading older runs; new approval waits use `waiting_approval`.
+
+Runnable examples:
 
 - [`examples/sdk/full-agent.ts`](../../examples/sdk/full-agent.ts)
 - [`examples/sdk/agent-runtime.ts`](../../examples/sdk/agent-runtime.ts)
 - [`examples/sdk/agent-stream.ts`](../../examples/sdk/agent-stream.ts)
-
-```ts
-import { Agent, tool } from "@zhivex-ai/sdk";
-import { createOpenAI } from "@zhivex-ai/openai";
-import { z } from "zod";
-
-const openai = createOpenAI({
-  apiKey: process.env.OPENAI_API_KEY
-});
-
-const weatherAgent = new Agent({
-  model: openai("gpt-5"),
-  instructions: "Be concise and use tools when they help.",
-  maxSteps: 4,
-  tools: {
-    weather: tool({
-      name: "weather",
-      schema: z.object({ city: z.string() }),
-      execute: async ({ city }) => ({ city, forecast: "sunny" })
-    })
-  }
-});
-
-const run = await weatherAgent.run({
-  prompt: "How's the weather in Madrid?"
-});
-
-console.log(run.status);
-console.log(run.outputText);
-console.log(run.state);
-```
-
-What the runtime guarantees:
-
-- `Agent.run()` and `runAgent()` always return the final `state`, including `steps`, `toolResults`, `messages`, `usage`, and `pendingApprovals`.
-- Multi-step `usage` is the aggregate across every model call, and each step keeps an immutable request snapshot with its actual model-call timing.
-- `state` is JSON-serializable and can be persisted by your app.
-- `Agent` and `createAgent()` keep reusable defaults such as `instructions`, `tools`, `maxSteps`, `reasoning`, and provider options in one place.
-- `Agent.resume()` and `resumeAgent()` continue from a previous `state` instead of rebuilding the run manually.
-- Production states include `queued`, `running`, `waiting_approval`, `cancel_requested`, `cancelled`, `timed_out`, `failed`, and `completed`. The legacy `suspended` status is still accepted when loading old persisted runs, but new approval waits use `waiting_approval`.
-
-Prefer `Agent` for new application code and docs. Use `createAgent()` / `runAgent()` when you want a functional API, plain object definitions, or compatibility with existing code.
 
 ## Runner And Sessions
 
