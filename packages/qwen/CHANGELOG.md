@@ -1,5 +1,11 @@
 # @zhivex-ai/qwen
 
+## 0.20.0
+
+### Minor Changes
+
+- Support Qwen4-Max and its separate Token Plan preview contract: hybrid reasoning, multimodal Chat/Responses, native JSON Schema, parallel tools, and output limits. Preserve Qwen4-Max encrypted reasoning across generation, streaming and stateless tool/multi-turn histories; expose thinking summaries and explicit prompt caching with content breakpoints and cache usage. Add both model IDs to the shared SDK catalog without inferred pricing.
+
 ## 0.19.0
 
 ### Minor Changes
