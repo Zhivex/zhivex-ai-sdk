@@ -41,12 +41,12 @@
     "access": "public"
   },
   "dependencies": {
-    "@google-cloud/aiplatform": "^7.7.0",
+    "@google-cloud/aiplatform": "^7.8.0",
     "@zhivex-ai/anthropic": "^0.16.1",
     "@zhivex-ai/core": "^1.39.1",
     "@zhivex-ai/gemini": "^0.15.1",
     "@zhivex-ai/openai": "^0.18.2",
-    "google-auth-library": "^11.3.2",
+    "google-auth-library": "^11.3.4",
     "zod": "^4.6.7"
   }
 }
