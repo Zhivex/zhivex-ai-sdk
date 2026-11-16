@@ -1,5 +1,15 @@
 # @zhivex-ai/qwen
 
+## 0.20.0
+
+### Minor Changes
+
+- bc50ed0: Support Qwen4-Max and its separate Token Plan preview contract: hybrid reasoning, multimodal Chat/Responses, native JSON Schema, parallel tools, and output limits. Preserve encrypted reasoning across generation, streaming, and stateless tool/multi-turn histories, and expose thinking summaries and explicit prompt caching with content breakpoints and cache usage.
+
+### Patch Changes
+
+- f5bec91: Fix Qwen4 automatic routing for native structured output combined with hosted tools or a Responses output limit. Select Responses for the complete request while retaining Chat preference for standalone schemas and rejecting incompatible Chat-only options.
+
 ## 0.19.0
 
 ### Minor Changes

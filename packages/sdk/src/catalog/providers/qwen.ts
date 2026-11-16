@@ -2,10 +2,13 @@ import { defineModelCatalogFragment } from "../fragment.js";
 
 export const qwenCatalogFragment = defineModelCatalogFragment({
   provider: "qwen",
-  revision: "2026-11-04",
-  verifiedAt: "2026-11-04",
+  revision: "2026-11-16",
+  verifiedAt: "2026-11-16",
   pricingEffectiveAt: "2026-11-04",
   sources: [
+    "https://docs.qwencloud.com/developer-guides/getting-started/latest-model",
+    "https://docs.qwencloud.com/developer-guides/text-generation/cot-summary",
+    "https://docs.qwencloud.com/developer-guides/run-and-scale/explicit-cache-qwen4",
     "https://docs.qwencloud.com/changelog/models",
     "https://docs.qwencloud.com/api-reference/audio-generation",
     "https://docs.qwencloud.com/developer-guides/speech/realtime-streaming",
@@ -32,6 +35,17 @@ export const qwenCatalogFragment = defineModelCatalogFragment({
     "https://docs.qwencloud.com/api-reference/video-generation/pixverse-reference-to-video/create-task"
   ],
   entries: [
+    {
+      provider: "qwen", modelId: "qwen4-max", maxOutputTokens: 262144,
+      recommendedFor: ["chat", "tools", "reasoning", "vision"],
+      evidence: { maxOutputTokens: { source: "https://docs.qwencloud.com/api-reference/chat/openai-chat", sourceType: "primary", verifiedAt: "2026-11-16", conditions: ["Thinking mode: reasoning and final answer combined. Non-thinking output is limited to 131072 tokens."] } }
+    },
+    {
+      provider: "qwen", modelId: "qwen4-max-preview", maxOutputTokens: 393216,
+      recommendedFor: ["chat", "tools", "reasoning", "vision"],
+      lifecycle: { retiredAt: "2026-11-25", source: "https://docs.qwencloud.com/developer-guides/getting-started/latest-model" },
+      evidence: { maxOutputTokens: { source: "https://docs.qwencloud.com/developer-guides/getting-started/latest-model", sourceType: "primary", verifiedAt: "2026-11-16", conditions: ["Token Plan only; combined reasoning and final answer budget."] } }
+    },
     { provider: "qwen", modelId: "qwen-audio-3.1-tts-flash" },
     { provider: "qwen", modelId: "qwen-audio-3.1-tts-plus" },
     { provider: "qwen", modelId: "qwen-audio-3.1-tts-next" },

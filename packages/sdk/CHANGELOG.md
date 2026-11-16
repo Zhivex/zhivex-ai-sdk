@@ -1,5 +1,11 @@
 # @zhivex-ai/sdk
 
+## 1.39.1
+
+### Patch Changes
+
+- bc50ed0: Add Qwen4-Max and Qwen4-Max-Preview to the SDK catalog with independently sourced output limits and preview lifecycle metadata, without inferred pricing.
+
 ## 1.39.0
 
 ### Minor Changes

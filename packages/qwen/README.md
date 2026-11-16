@@ -32,6 +32,52 @@ Supported region values are `singapore`, `beijing`, `hong-kong`, `tokyo`, `frank
 
 Qwen speech downloads accept HTTPS audio URLs only, validate every redirect manually, and never forward the provider API key to the media host.
 
+## Qwen4-Max
+
+Use `qwen("qwen4-max")` with standard Model Studio credentials. Both Chat Completions and Responses support generation, streaming, text/image/video input, callable tools, parallel tool calls, native JSON Schema, and hosted tools through Responses. Audio and document-file input are rejected; output is text. Availability still depends on the account and region.
+
+```ts
+const result = await generateText({
+  model: qwen("qwen4-max"),
+  prompt: "Compute 17 times 23.",
+  reasoning: { effort: "low" },
+  maxTokens: 2048,
+  providerOptions: {
+    apiMode: "responses",
+    thinking_display: "summarized",
+    store: false,
+  },
+});
+```
+
+Thinking is enabled by default. The final model uses `low`, `high`, and `xhigh`: Chat maps `minimal` to `low`, `medium` to `high`, and `max` to `xhigh`; `none` disables thinking. Responses sends the shared effort directly. With no controls, upstream uses `high` with a 131072-token thinking budget. A budget-only request preserves the supplied budget and leaves upstream to select the effort. Use either effort or budget, not both. Thinking budgets are 1–262144. Chat always preserves thinking history. Forced callable-tool selection requires thinking to be disabled.
+
+`maxTokens` bounds reasoning plus the final answer: at most 262144 tokens with thinking, or 131072 without it. Chat sends `max_completion_tokens`; Responses sends `max_output_tokens`. Native schema output uses Chat by default. In `auto` mode, a hosted tool or a Responses output limit selects Responses `text.format` for the complete request; you can also explicitly select `apiMode: "responses"`. Video uses a `FilePart` with a `video/*` MIME type; both APIs accept public URLs, data URLs, or raw base64.
+
+### Thinking summaries and encrypted history
+
+Set `providerOptions.thinking_display: "summarized"` for either API, or `providerOptions.reasoning: { summary: "auto" }`. The adapter translates this to Chat `thinking_display` plus `enable_thinking`, or Responses `reasoning.summary`. Summaries require thinking enabled and are specific to the final `qwen4-max` model.
+
+Keep the complete returned `messages`, including `provider-data`, for subsequent turns and tool loops. Chat stores ciphertext as Qwen provider data with `type: "encrypted_content"` and `encryptedContent`; replay maps it back to the assistant's `encrypted_content`. Responses retains complete `reasoning` items. Streamed Responses summary deltas use `type: "reasoning_summary"`; the completed reasoning snapshot is the replayable history, not those display deltas. Ciphertext-only frames are retained and final snapshots do not duplicate the reasoning item. Never concatenate ciphertext or put it in visible text. Missing ciphertext remains missing; the SDK does not reconstruct reasoning from a summary.
+
+Use the same API mode and summary setting on each turn. With `store: false`, Responses replays the supplied full history without `previous_response_id`; otherwise the existing server-side continuation behavior remains available. Persist original images/video along with the returned messages because ciphertext contains reasoning, not the original input media.
+
+### Qwen4 explicit prompt cache
+
+`providerOptions.prompt_cache_options` supports `{ mode: "implicit" | "explicit", ttl: "5m" | "1h" }`; an empty object enables automatic caching. For manual breakpoints, put `providerMetadata: { prompt_cache_breakpoint: { mode: "explicit" } }` on a text or image part. Chat also preserves the compatible `cache_control: { type: "ephemeral", ttl: "1h" }` marker. Do not mix marker styles in a request. The adapter keeps text-only marked content as an array, forwards supported visual options (`min_pixels`, `max_pixels`, `fps`) from part metadata, and reports cache reads/writes in `usage.cachedInputTokens` and `usage.cacheWriteTokens`. Cache creation requires a sufficiently long prefix (at least 1024 tokens); account and upstream billing rules apply.
+
+### Qwen4-Max-Preview
+
+`qwen4-max-preview` remains a separate contract. It requires the exact `QWEN_TOKEN_PLAN_BASE_URL` (or the existing legacy Token Plan endpoint) and a dedicated plan key. It supports hybrid reasoning, text/image/video, tools and native schemas, but retains `low` / `medium` / `xhigh` Chat effort mapping and a combined output maximum of 393216. Final-model summary encryption and explicit-cache options are not inferred for the preview. Upstream schedules preview retirement for November 25, 2026, 24:00 UTC+8. The SDK never silently rewrites the model ID.
+
+Sources: [Chat API](https://docs.qwencloud.com/api-reference/chat/openai-chat), [thinking summaries](https://docs.qwencloud.com/developer-guides/text-generation/cot-summary), [explicit cache](https://docs.qwencloud.com/developer-guides/run-and-scale/explicit-cache-qwen4), [preview contract and lifecycle](https://docs.qwencloud.com/developer-guides/getting-started/latest-model).
+
+Opt-in live verification (standard credentials, final model):
+
+```bash
+QWEN4_INTEGRATION=1 bun --env-file=.env run test:integration packages/qwen/tests/qwen4.integration.test.ts
+```
+
 ### Qwen3.8 Omni Flash
 
 `qwen3.8-omni-flash` accepts text, images, audio, and video and returns **text only** over HTTP. It uses standard Model Studio credentials, including the default Singapore endpoint or a regional workspace endpoint. Both Chat Completions and Responses support streaming and non-streaming generation. This is a separate contract from streaming-only Omni 3/3.5 and from the Realtime model.
