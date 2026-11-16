@@ -93,44 +93,43 @@ describe("Qwen4 contracts", () => {
     expect(body().input.filter((i: any) => i.type === "reasoning")).toEqual([item]);
     expect(body().input.some((i: any) => ["reasoning_summary", "reasoning_content"].includes(i.type))).toBe(false);
   });
-  it.each(["chat", "responses"] as const)("supports native schema on %s", async apiMode => {
+  it("supports native schema on Chat", async () => {
     const { model, fetch, body } = setup();
-    fetch.mockResolvedValueOnce(apiMode === "chat" ? chat({ content: '{"count":4}' }) : responses([{ type: "message", content: [{ type: "output_text", text: '{"count":4}' }] }]));
-    const r = await generateObject({ model, prompt: "Count 4", schema: z.object({ count: z.number() }), mode: "native", reasoning: { effort: "none" }, providerOptions: { apiMode } });
+    fetch.mockResolvedValueOnce(chat({ content: '{"count":4}' }));
+    const r = await generateObject({ model, prompt: "Count 4", schema: z.object({ count: z.number() }), mode: "native", reasoning: { effort: "none" }, providerOptions: { apiMode: "chat" } });
     expect(r.object).toEqual({ count: 4 });
-    const format = apiMode === "chat" ? body().response_format : body().text.format;
-    expect(format.type).toBe("json_schema");
-    expect((apiMode === "chat" ? format.json_schema : format).schema.properties.count.type).toBe("number");
+    expect(body().response_format).toMatchObject({ type: "json_schema", json_schema: { schema: { properties: { count: { type: "number" } } } } });
   });
   for (const modelId of ["qwen4-max", "qwen4-max-preview"]) {
-    it.each([undefined, "auto"] as const)(`routes ${modelId} native schemas with hosted tools to Responses (mode=%s)`, async apiMode => {
-      const { model, fetch, body } = setup(modelId, modelId.endsWith("preview") ? QWEN_TOKEN_PLAN_BASE_URL : undefined);
-      fetch.mockResolvedValueOnce(responses([{ type: "message", content: [{ type: "output_text", text: '{"count":4}' }] }]));
+    it.each([undefined, "auto", "responses"] as const)(`rejects ${modelId} native schemas with hosted tools before fetching (mode=%s)`, async apiMode => {
+      const { model, fetch } = setup(modelId, modelId.endsWith("preview") ? QWEN_TOKEN_PLAN_BASE_URL : undefined);
       const input = { messages, maxTokens: 512, tools: { search: qwenWebSearchTool() },
         structuredOutput: { mode: "native" as const, schema: z.object({ count: z.number() }) }, providerOptions: { apiMode } };
-      expect((await model.generate(input)).text).toBe('{"count":4}');
-      expect(fetch.mock.calls.at(-1)![0]).toMatch(/\/responses$/);
-      expect(body()).toMatchObject({ max_output_tokens: 512, tools: [{ type: "web_search" }], text: { format: { type: "json_schema", schema: { properties: { count: { type: "number" } } } } } });
-      fetch.mockResolvedValueOnce(sse([
-        { type: "response.output_text.delta", delta: '{"count":4}' },
-        { type: "response.completed", response: { status: "completed", output: [] } }
-      ]));
-      const events = [];
-      for await (const event of await model.stream(input)) events.push(event);
-      expect(fetch.mock.calls.at(-1)![0]).toMatch(/\/responses$/);
-      expect(body()).toMatchObject({ stream: true, text: { format: { type: "json_schema" } } });
-      expect(events.some(e => e.type === "text-delta" && e.textDelta === '{"count":4}')).toBe(true);
+      await expect(model.generate(input)).rejects.toThrow(/native structured output requires Chat/);
+      await expect(model.stream(input)).rejects.toThrow(/native structured output requires Chat/);
+      expect(fetch).not.toHaveBeenCalled();
     });
   }
+  it.each([{ apiMode: "responses" as const }, { max_output_tokens: 512 }])("rejects native Responses schemas without hosted tools (%j)", async providerOptions => {
+    const { model, fetch } = setup();
+    const input = { messages, structuredOutput: { mode: "native" as const, schema: z.object({ count: z.number() }) }, providerOptions };
+    await expect(model.generate(input)).rejects.toThrow(/native structured output requires Chat/);
+    await expect(model.stream(input)).rejects.toThrow(/native structured output requires Chat/);
+    expect(fetch).not.toHaveBeenCalled();
+  });
   it("prefers Chat for an auto native schema without Responses-only features", async () => {
     const { model, fetch } = setup();
     await model.generate({ messages, structuredOutput: { mode: "native", schema: z.object({ count: z.number() }) } });
     expect(fetch.mock.calls.at(-1)![0]).toMatch(/\/chat\/completions$/);
   });
-  it("routes auto schemas with a Responses output limit to Responses", async () => {
-    const { model, body } = setup();
-    await model.generate({ messages, structuredOutput: { mode: "native", schema: z.object({ count: z.number() }) }, providerOptions: { max_output_tokens: 512 } });
-    expect(body()).toMatchObject({ max_output_tokens: 512, text: { format: { type: "json_schema" } } });
+  it("allows prompted schemas with hosted tools on Responses", async () => {
+    const { model, fetch, body } = setup();
+    fetch.mockResolvedValueOnce(responses([{ type: "message", content: [{ type: "output_text", text: '{"count":4}' }] }]));
+    const r = await generateObject({ model, prompt: "Count 4", schema: z.object({ count: z.number() }), mode: "prompted", tools: { search: qwenWebSearchTool() } });
+    expect(r.object).toEqual({ count: 4 });
+    expect(fetch.mock.calls.at(-1)![0]).toMatch(/\/responses$/);
+    expect(body().text).toBeUndefined();
+    expect(JSON.stringify(body().input)).toContain("count");
   });
   it.each([
     { apiMode: "chat" as const },

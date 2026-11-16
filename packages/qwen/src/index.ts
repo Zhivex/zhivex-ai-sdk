@@ -1225,6 +1225,13 @@ const resolveApiMode = (
     throw new UnsupportedFeatureError('QwenCloud glm-5.2 callable tools require apiMode "chat" or "auto" because Responses function continuation is unavailable.');
   }
   const needsResponses = hasHostedTools(input.tools) || hasNonVideoFileInput(input.messages) || providerOptions.max_output_tokens !== undefined;
+  // Qwen Responses documents only text.format.type="text"; live Qwen4 requests
+  // echo json_schema but can return fenced, invalid JSON even with strict=true.
+  if (input.structuredOutput?.mode === "native" && (requestedMode === "responses" || needsResponses)) {
+    throw new UnsupportedFeatureError(
+      'Qwen native structured output requires Chat Completions and cannot be combined with Responses-only features. Use mode "prompted" for locally validated JSON with Responses or hosted tools.'
+    );
+  }
   const needsChat =
     glmCallableTools ||
     (input.maxTokens !== undefined && (!supportsResponsesOutputLimit(modelId) ||
@@ -1233,8 +1240,7 @@ const resolveApiMode = (
     providerOptions.thinking_budget !== undefined ||
     providerOptions.tool_stream === true ||
     (isQwen4(modelId) && providerOptions.response_format !== undefined) ||
-    (input.structuredOutput?.mode === "native" && (!isQwen4(modelId) ||
-      (requestedMode !== "responses" && !(requestedMode === "auto" && needsResponses)))) ||
+    input.structuredOutput?.mode === "native" ||
     (!omni38 && (hasMessagePart(input.messages, "audio") || videoInput && !isQwen4(modelId)));
 
   if (needsChat && needsResponses) {
@@ -2025,7 +2031,6 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
                 tools: mapResponsesTools(input.tools),
                 tool_choice: mapResponsesToolChoice(input.toolChoice, input.tools),
                 temperature: input.temperature,
-                ...(isQwen4(this.modelId) && input.structuredOutput?.mode === "native" ? { text: { format: { type: "json_schema", ...mapStructuredOutput(this.modelId, input)?.json_schema } } } : {}),
                 ...mapResponsesReasoning(this.modelId, input, providerOptions),
                 stream: false
               })
@@ -2148,7 +2153,6 @@ class QwenLanguageModel implements LanguageModel<QwenLanguageModelOptions> {
               tools: mapResponsesTools(input.tools),
               tool_choice: mapResponsesToolChoice(input.toolChoice, input.tools),
               temperature: input.temperature,
-              ...(isQwen4(this.modelId) && input.structuredOutput?.mode === "native" ? { text: { format: { type: "json_schema", ...mapStructuredOutput(this.modelId, input)?.json_schema } } } : {}),
               ...mapResponsesReasoning(this.modelId, input, providerOptions),
               stream: true
             })

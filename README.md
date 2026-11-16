@@ -86,7 +86,7 @@ Server runtimes only: Node.js, Bun, route handlers, or workers. Browser clients 
 2. **Portable.** The same `generateText`, `streamText`, tools, and agents. You change the adapter.
 3. **Native provider features.** Qwen Cloud audio and realtime, DeepSeek FIM, Gemini and Vertex media, and Kimi Formula tools stay reachable on the shared contract.
 
-Qwen4-Max is supported through `@zhivex-ai/qwen`, including multimodal Chat/Responses, native JSON Schema, parallel tools, encrypted reasoning history, and explicit prompt caching. See the [Qwen4 setup and preview differences](packages/qwen/README.md#qwen4-max).
+Qwen4-Max is supported through `@zhivex-ai/qwen`, including multimodal Chat/Responses, native JSON Schema through Chat, parallel tools, encrypted reasoning history, and explicit prompt caching. See the [Qwen4 setup and preview differences](packages/qwen/README.md#qwen4-max).
 4. **Durable on your own database.** Sessions and `resumeAgent` are stored in Postgres, SQLite, or a file you operate. Use `createPostgresSessionService()` in production. File stores are for local development.
 5. **An honest stability contract.** Every runtime export is `stable`, `beta`, or `experimental`. `getApiStability()` reads that label, and CI fails if an export is unclassified. See [STABILITY.md](./STABILITY.md).
 
