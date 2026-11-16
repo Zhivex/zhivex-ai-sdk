@@ -12,7 +12,7 @@ interface ProviderTemplateMetadata {
 export const providerTemplates: Readonly<Record<"vertex" | "openai" | "xai" | "meta" | "anthropic" | "gemini" | "kimi" | "deepseek" | "zai", ProviderTemplateMetadata>> = {
   "vertex": {
     "packageName": "@zhivex-ai/vertex",
-    "packageVersion": "1.3.5",
+    "packageVersion": "1.3.6",
     "factoryName": "createVertex",
     "envName": "GOOGLE_CLOUD_PROJECT",
     "defaultModel": "gemini-3.7-flash"
@@ -40,7 +40,7 @@ export const providerTemplates: Readonly<Record<"vertex" | "openai" | "xai" | "m
   },
   "anthropic": {
     "packageName": "@zhivex-ai/anthropic",
-    "packageVersion": "0.16.1",
+    "packageVersion": "0.16.2",
     "factoryName": "createAnthropic",
     "envName": "ANTHROPIC_API_KEY",
     "defaultModel": "claude-sonnet-5"

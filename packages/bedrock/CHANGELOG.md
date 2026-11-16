@@ -1,5 +1,13 @@
 # @zhivex-ai/bedrock
 
+## 2.1.3
+
+### Patch Changes
+
+- Update production dependencies for WebSocket connections and the Anthropic, Bedrock, and Vertex adapters, including the ws fix for excessive buffering of automatic Pong responses.
+- Updated dependencies
+  - @zhivex-ai/core@1.40.1
+
 ## 2.1.2
 
 ### Patch Changes
