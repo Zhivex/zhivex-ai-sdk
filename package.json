@@ -62,7 +62,7 @@
     "test:openai-live:browser": "playwright test --config playwright.openai-live.config.ts"
   },
   "devDependencies": {
-    "@ai-sdk/react": "4.0.173",
+    "@ai-sdk/react": "4.0.176",
     "@changesets/changelog-git": "^1.0.0",
     "@changesets/cli": "^3.0.3",
     "@modelcontextprotocol/sdk": "1.32.2",
@@ -77,7 +77,7 @@
     "@types/ws": "^8.18.2",
     "@typescript/typescript6": "^6.0.2",
     "@vitest/coverage-v8": "5.1.0",
-    "ai": "7.0.169",
+    "ai": "7.0.172",
     "happy-dom": "^21.0.3",
     "postgres": "^4.1.1",
     "react": "^19.3.1",
