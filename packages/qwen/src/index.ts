@@ -1224,6 +1224,7 @@ const resolveApiMode = (
   if (glmCallableTools && requestedMode === "responses") {
     throw new UnsupportedFeatureError('QwenCloud glm-5.2 callable tools require apiMode "chat" or "auto" because Responses function continuation is unavailable.');
   }
+  const needsResponses = hasHostedTools(input.tools) || hasNonVideoFileInput(input.messages) || providerOptions.max_output_tokens !== undefined;
   const needsChat =
     glmCallableTools ||
     (input.maxTokens !== undefined && (!supportsResponsesOutputLimit(modelId) ||
@@ -1232,9 +1233,9 @@ const resolveApiMode = (
     providerOptions.thinking_budget !== undefined ||
     providerOptions.tool_stream === true ||
     (isQwen4(modelId) && providerOptions.response_format !== undefined) ||
-    (input.structuredOutput?.mode === "native" && (!isQwen4(modelId) || requestedMode !== "responses")) ||
+    (input.structuredOutput?.mode === "native" && (!isQwen4(modelId) ||
+      (requestedMode !== "responses" && !(requestedMode === "auto" && needsResponses)))) ||
     (!omni38 && (hasMessagePart(input.messages, "audio") || videoInput && !isQwen4(modelId)));
-  const needsResponses = hasHostedTools(input.tools) || hasNonVideoFileInput(input.messages) || providerOptions.max_output_tokens !== undefined;
 
   if (needsChat && needsResponses) {
     throw new UnsupportedFeatureError(

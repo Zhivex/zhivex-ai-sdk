@@ -52,7 +52,7 @@ const result = await generateText({
 
 Thinking is enabled by default. The final model uses `low`, `high`, and `xhigh`: Chat maps `minimal` to `low`, `medium` to `high`, and `max` to `xhigh`; `none` disables thinking. Responses sends the shared effort directly. With no controls, upstream uses `high` with a 131072-token thinking budget. A budget-only request preserves the supplied budget and leaves upstream to select the effort. Use either effort or budget, not both. Thinking budgets are 1–262144. Chat always preserves thinking history. Forced callable-tool selection requires thinking to be disabled.
 
-`maxTokens` bounds reasoning plus the final answer: at most 262144 tokens with thinking, or 131072 without it. Chat sends `max_completion_tokens`; Responses sends `max_output_tokens`. Native schema output uses Chat by default; explicitly select `apiMode: "responses"` to use Responses `text.format`. Video uses a `FilePart` with a `video/*` MIME type; both APIs accept public URLs, data URLs, or raw base64.
+`maxTokens` bounds reasoning plus the final answer: at most 262144 tokens with thinking, or 131072 without it. Chat sends `max_completion_tokens`; Responses sends `max_output_tokens`. Native schema output uses Chat by default. In `auto` mode, a hosted tool or a Responses output limit selects Responses `text.format` for the complete request; you can also explicitly select `apiMode: "responses"`. Video uses a `FilePart` with a `video/*` MIME type; both APIs accept public URLs, data URLs, or raw base64.
 
 ### Thinking summaries and encrypted history
 
