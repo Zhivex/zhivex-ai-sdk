@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import * as core from "../../core/src/index.js";
+import * as core from "@zhivex-ai/core";
 import * as sdk from "../src/index.js";
 import * as gemini from "../../gemini/src/index.js";
 import * as vertex from "../../vertex/src/index.js";

@@ -2,7 +2,7 @@ import { expect, it } from "vitest";
 import { streamText, generateText, ValidationError } from "../src/index.js";
 import { createMockLanguageModel } from "../../core/src/agent-evaluation.js";
 import { ConflictError, ValidationError as AgentValidationError } from "../../agents/src/index.js";
-import { ConflictError as CoreConflictError } from "../../core/src/errors.js";
+import { ConflictError as CoreConflictError } from "@zhivex-ai/core";
 
 it("shares error constructors across public facades", () => {
   expect(ConflictError).toBe(CoreConflictError);
