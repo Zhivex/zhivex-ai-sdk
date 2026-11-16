@@ -248,8 +248,12 @@ describe("release workflow", () => {
     for (const reference of actionReferences) {
       expect(reference).toMatch(/@[a-f0-9]{40}$/);
     }
+    const codeqlInit = codeqlWorkflow.match(
+      /uses:\s+github\/codeql-action\/init@([a-f0-9]{40})\s+# v4\.\d+\.\d+/
+    );
+    expect(codeqlInit).not.toBeNull();
     expect(codeqlWorkflow).toContain(
-      "github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370"
+      `github/codeql-action/analyze@${codeqlInit![1]}`
     );
     expect(workflow).toContain(
       "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"

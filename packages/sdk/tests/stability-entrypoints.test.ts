@@ -17,7 +17,7 @@ import * as mcpServerStdioBrowser from "../src/mcp-server-stdio-browser.js";
 import * as coreMcpServerStdioBrowser from "../../core/src/mcp-server-stdio-browser.js";
 import * as beta from "../src/beta.js";
 import * as experimental from "../src/experimental.js";
-import * as coreExperimental from "../../core/src/experimental-entry.js";
+import * as coreExperimental from "@zhivex-ai/core/experimental";
 import { getApiStability, runComputerUse } from "../src/index.js";
 
 describe("SDK stability entrypoints", () => {

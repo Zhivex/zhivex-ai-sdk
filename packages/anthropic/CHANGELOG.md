@@ -6,6 +6,14 @@
 
 - Support Claude Haiku 5.5 with adaptive thinking and effort controls, computer/browser toolsets, bound thinking, local rejection of sampling/prefill/`effort=none`, catalog pricing (including the 100k long-context tier), Bedrock/Vertex host IDs, and no managed server-side fallbacks.
 
+## 0.16.2
+
+### Patch Changes
+
+- Update production dependencies for WebSocket connections and the Anthropic, Bedrock, and Vertex adapters, including the ws fix for excessive buffering of automatic Pong responses.
+- Updated dependencies
+  - @zhivex-ai/core@1.40.1
+
 ## 0.16.1
 
 ### Patch Changes
