@@ -59,8 +59,8 @@ describe.skipIf(!enabled)("Qwen4-Max live", () => {
       expect(r.text).toContain("ALPHA_731");
       expect(r.text).toContain("BETA_952");
     }, 190_000);
-    it(`${apiMode}: native JSON Schema`, async () => {
-      const r = await generateObject({ model: model(), prompt: "Return name Qwen and count 4", schema: z.object({ name: z.literal("Qwen"), count: z.literal(4) }), mode: "native", reasoning: { effort: "none" }, providerOptions: { apiMode }, ...limits });
+    it(`${apiMode}: structured JSON`, async () => {
+      const r = await generateObject({ model: model(), prompt: "Return name Qwen and count 4", schema: z.object({ name: z.literal("Qwen"), count: z.literal(4) }), mode: apiMode === "chat" ? "native" : "prompted", reasoning: { effort: "none" }, providerOptions: { apiMode }, ...limits });
       expect(r.object).toEqual({ name: "Qwen", count: 4 });
     }, 100_000);
     it(`${apiMode}: image understanding`, async () => {

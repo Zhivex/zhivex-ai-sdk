@@ -34,7 +34,7 @@ Qwen speech downloads accept HTTPS audio URLs only, validate every redirect manu
 
 ## Qwen4-Max
 
-Use `qwen("qwen4-max")` with standard Model Studio credentials. Both Chat Completions and Responses support generation, streaming, text/image/video input, callable tools, parallel tool calls, native JSON Schema, and hosted tools through Responses. Audio and document-file input are rejected; output is text. Availability still depends on the account and region.
+Use `qwen("qwen4-max")` with standard Model Studio credentials. Both Chat Completions and Responses support generation, streaming, text/image/video input, callable tools, and parallel tool calls. Native JSON Schema uses Chat; hosted tools use Responses. Audio and document-file input are rejected; output is text. Availability still depends on the account and region.
 
 ```ts
 const result = await generateText({
@@ -52,7 +52,7 @@ const result = await generateText({
 
 Thinking is enabled by default. The final model uses `low`, `high`, and `xhigh`: Chat maps `minimal` to `low`, `medium` to `high`, and `max` to `xhigh`; `none` disables thinking. Responses sends the shared effort directly. With no controls, upstream uses `high` with a 131072-token thinking budget. A budget-only request preserves the supplied budget and leaves upstream to select the effort. Use either effort or budget, not both. Thinking budgets are 1–262144. Chat always preserves thinking history. Forced callable-tool selection requires thinking to be disabled.
 
-`maxTokens` bounds reasoning plus the final answer: at most 262144 tokens with thinking, or 131072 without it. Chat sends `max_completion_tokens`; Responses sends `max_output_tokens`. Native schema output uses Chat by default. In `auto` mode, a hosted tool or a Responses output limit selects Responses `text.format` for the complete request; you can also explicitly select `apiMode: "responses"`. Video uses a `FilePart` with a `video/*` MIME type; both APIs accept public URLs, data URLs, or raw base64.
+`maxTokens` bounds reasoning plus the final answer: at most 262144 tokens with thinking, or 131072 without it. Chat sends `max_completion_tokens`; Responses sends `max_output_tokens`. Native schema output requires Chat. Qwen Responses only documents `text.format.type: "text"`, and live requests with `json_schema` can return invalid JSON despite `strict: true`. Native schemas combined with Responses, hosted tools, or `max_output_tokens` are rejected before fetching. For hosted tools with structured output, use `generateObject({ mode: "prompted", ... })` and local schema validation; this does not provide server-enforced JSON Schema. See the [Responses API contract](https://docs.qwencloud.com/api-reference/chat/openai-responses). Video uses a `FilePart` with a `video/*` MIME type; both APIs accept public URLs, data URLs, or raw base64.
 
 ### Thinking summaries and encrypted history
 
