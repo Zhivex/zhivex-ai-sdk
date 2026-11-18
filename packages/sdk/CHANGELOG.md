@@ -1,5 +1,11 @@
 # @zhivex-ai/sdk
 
+## 1.40.0
+
+### Minor Changes
+
+- 6d2bcb6: Add first-class support for OpenAI GPT-6.2 Astra and Sol. Both use Responses by default and support explicit Chat Completions for requests without tools. The SDK catalog includes their context limits, Standard token rates, and long-context pricing.
+
 ## 1.39.1
 
 ### Patch Changes

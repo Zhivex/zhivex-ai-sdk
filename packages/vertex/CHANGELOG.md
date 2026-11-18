@@ -1,5 +1,12 @@
 # @zhivex-ai/vertex
 
+## 1.3.7
+
+### Patch Changes
+
+- Updated dependencies [6d2bcb6]
+  - @zhivex-ai/openai@0.19.0
+
 ## 1.3.6
 
 ### Patch Changes
