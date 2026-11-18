@@ -2,6 +2,21 @@
 
 OpenAI adapter for Zhivex AI SDK.
 
+## GPT-6.2 Astra and Sol
+
+Use `createOpenAI()("gpt-6.2-astra")` or `createOpenAI()("gpt-6.2-sol")`. Both models accept text and images and return text. They default to the Responses API for streaming, native structured output, and tools, including hosted web search, computer use, and the Multi-agent beta. Set `providerOptions.apiMode: "chat"` for Chat Completions requests without tool calls.
+
+Both models accept reasoning efforts `low`, `medium`, `high`, `xhigh`, and `max`. Leave the effort unset to use the provider default. OpenAI rejects custom `temperature`, `top_p`, and log probabilities on these models.
+
+Both have a 1,050,000-token context window, with limits of 922,000 input tokens and 128,000 output tokens. The SDK catalog records the following Standard rates in USD per million tokens.
+
+| Model | Input | Cached input | Cache write (30 minutes) | Output |
+| --- | ---: | ---: | ---: | ---: |
+| GPT-6.2 Astra | $8 | $0.40 | $10 | $40 |
+| GPT-6.2 Sol | $2 | $0.10 | $2.50 | $10 |
+
+Above 272,000 input tokens, the input and cache rates double and the output rate increases by 50% for the whole request. Responses also supports 12-hour cache writes and the `ultrafast` service tier. See the [Astra model page](https://developers.openai.com/api/docs/models/gpt-6.2-astra), [Sol model page](https://developers.openai.com/api/docs/models/gpt-6.2-sol), and [pricing](https://developers.openai.com/api/docs/pricing).
+
 ## GPT-6.1 Sol, GPT-6.1 Terra, GPT-6 Sol, and GPT-6 Luna
 
 Use `createOpenAI()("gpt-6.1-sol")`, `createOpenAI()("gpt-6.1-terra")`, `createOpenAI()("gpt-6-sol")`, or `createOpenAI()("gpt-6-luna")`. All four default to the Responses API, including streaming, tools, vision, and native structured output.
@@ -86,7 +101,7 @@ Multi-turn Responses normally continue through `previous_response_id`. With `pro
 
 Use `providerOptions.safety_identifier` for a stable, non-PII identifier for the end user. It is sent as an OpenAI request field; do not put email addresses, names, or other direct personal data in it.
 
-`providerOptions.service_tier` accepts `auto`, `default`, `flex`, `scale`, `fast`, `priority`, and `ultrafast`. `ultrafast` is the Responses processing tier for `gpt-6.1-sol` and `gpt-6-astra`. The adapter forwards the value and still passes through other provider option fields. See the [2026-10-08 changelog](https://developers.openai.com/api/docs/changelog) and [Ultrafast mode](https://developers.openai.com/api/docs/guides/ultrafast-mode).
+`providerOptions.service_tier` accepts `auto`, `default`, `flex`, `scale`, `fast`, `priority`, and `ultrafast`. Responses supports `ultrafast` for GPT-6.2 Astra and Sol, GPT-6.1 Sol, and GPT-6 Astra. The adapter forwards the value and still passes through other provider option fields. See the [OpenAI API changelog](https://developers.openai.com/api/docs/changelog) and [Ultrafast mode](https://developers.openai.com/api/docs/guides/ultrafast-mode).
 
 ## GPT Image 2 and hosted image generation
 

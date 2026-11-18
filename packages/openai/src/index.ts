@@ -26,6 +26,7 @@ import {
   capabilities,
   groundedCapabilities,
   supportsOpenAIModernResponses,
+  isOpenAIGpt62Model,
   assertOpenAIModelRequestSupported,
   resolveOpenAIModelProfile,
   modelCapabilities
@@ -617,7 +618,7 @@ export type OpenAIProviderData =
 /**
  * Processing tier forwarded as `service_tier`.
  * Chat and Responses document `auto`, `default`, `flex`, `scale`, `fast`, and `priority`.
- * `ultrafast` is the Responses tier for `gpt-6.1-sol` and `gpt-6-astra`.
+ * `ultrafast` is a Responses tier supported by GPT-6.2 Astra and Sol, GPT-6.1 Sol, and GPT-6 Astra.
  * @see https://developers.openai.com/api/docs/changelog
  * @see https://developers.openai.com/api/docs/guides/ultrafast-mode
  */
@@ -1103,20 +1104,20 @@ const getOpenAIReasoning = (input: ModelGenerateInput) => {
   };
 };
 
-const mapChatReasoning = (input: ModelGenerateInput) => {
+const mapChatReasoningAndTokenLimit = (modelId: string, input: ModelGenerateInput) => {
   const reasoning = getOpenAIReasoning(input);
-  if (!reasoning) {
-    return {};
-  }
-  if (reasoning.mode !== undefined || reasoning.context !== undefined) {
+  if (reasoning?.mode !== undefined || reasoning?.context !== undefined) {
     throw new UnsupportedFeatureError(
       'Provider "openai" only supports "reasoning.mode" and "reasoning.context" through the Responses API.'
     );
   }
 
+  const tokenLimit = isOpenAIGpt62Model(modelId)
+    ? (input.maxTokens === undefined ? {} : { max_completion_tokens: input.maxTokens })
+    : reasoning ? { max_completion_tokens: input.maxTokens } : { max_tokens: input.maxTokens };
   return {
-    ...(reasoning.effort !== undefined ? { reasoning_effort: reasoning.effort } : {}),
-    max_completion_tokens: input.maxTokens
+    ...tokenLimit,
+    ...(reasoning?.effort !== undefined ? { reasoning_effort: reasoning.effort } : {})
   };
 };
 
@@ -2638,8 +2639,7 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
               response_format: mapStructuredOutput(input) ?? options.bodyOptions.response_format,
               temperature: input.temperature,
               ...openAIChatSampling(this.modelId, input, options.bodyOptions),
-              ...(input.reasoning ? {} : { max_tokens: input.maxTokens }),
-              ...mapChatReasoning(input),
+              ...mapChatReasoningAndTokenLimit(this.modelId, input),
               stream: false
             })
           }),
@@ -2745,8 +2745,7 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
             response_format: mapStructuredOutput(input) ?? options.bodyOptions.response_format,
             temperature: input.temperature,
             ...openAIChatSampling(this.modelId, input, options.bodyOptions),
-            ...(input.reasoning ? {} : { max_tokens: input.maxTokens }),
-            ...mapChatReasoning(input),
+            ...mapChatReasoningAndTokenLimit(this.modelId, input),
             stream: true,
             stream_options: { include_usage: true }
           })

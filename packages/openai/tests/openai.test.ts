@@ -1683,7 +1683,10 @@ describe("openai adapter", () => {
     ).rejects.toThrow('Provider "openai" does not support "reasoning.budgetTokens".');
   });
 
-  it.each(["gpt-6-astra", "gpt-6-astra-2026-09-04", "gpt-6-sol", "gpt-6-luna", "gpt-6-sol-2026-09-22", "gpt-6-luna-2026-09-22"])("routes %s tools and streaming through Responses", async (modelId) => {
+  it.each([
+    "gpt-6-astra", "gpt-6-astra-2026-09-04", "gpt-6-sol", "gpt-6-luna",
+    "gpt-6-sol-2026-09-22", "gpt-6-luna-2026-09-22", "gpt-6.2-astra", "gpt-6.2-sol"
+  ])("routes %s tools and streaming through Responses", async (modelId) => {
     const output = [{ type: "message", content: [{ type: "output_text", text: "ok" }] }];
     fetchMock.mockResolvedValueOnce(Response.json({ id: "resp_astra", status: "completed", output }));
     fetchMock.mockResolvedValueOnce(responsesSse(
@@ -1704,6 +1707,81 @@ describe("openai adapter", () => {
         model: modelId, reasoning: { effort: "low" }, tools: [{ type: "function", name: "weather" }]
       });
     }
+  });
+
+  describe.each(["gpt-6.2-astra", "gpt-6.2-sol"])("%s", (modelId) => {
+    it("maps native structured output, Ultrafast, and stateless reasoning through Responses", async () => {
+      fetchMock.mockResolvedValueOnce(Response.json({
+        status: "completed",
+        output: [{ type: "message", content: [{ type: "output_text", text: '{"ok":true}' }] }]
+      }));
+      const model = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch })(modelId);
+      const result = await generateObject({
+        model,
+        prompt: "Return ok.",
+        mode: "native",
+        schema: z.object({ ok: z.boolean() }),
+        reasoning: { effort: "max" },
+        providerOptions: { service_tier: "ultrafast", store: false, prompt_cache_options: { ttl: "12h" } }
+      });
+      expect(result.object).toEqual({ ok: true });
+      expect(fetchMock.mock.calls[0]?.[0]).toBe("https://api.openai.com/v1/responses");
+      expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
+        model: modelId,
+        reasoning: { effort: "max" },
+        text: { format: { type: "json_schema" } },
+        service_tier: "ultrafast",
+        store: false,
+        prompt_cache_options: { ttl: "12h" },
+        include: ["reasoning.encrypted_content"]
+      });
+    });
+
+    it("uses the Chat Completions token budget with or without an explicit reasoning effort", async () => {
+      fetchMock.mockResolvedValueOnce(Response.json({
+        choices: [{ message: { content: "ok" }, finish_reason: "stop" }]
+      }));
+      fetchMock.mockResolvedValueOnce(responsesSse(
+        { choices: [{ index: 0, delta: { content: "ok" }, finish_reason: null }] },
+        { choices: [{ index: 0, delta: {}, finish_reason: "stop" }] },
+        "[DONE]"
+      ));
+      const model = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch })(modelId);
+      const input = { model, prompt: "hello", maxTokens: 96, providerOptions: { apiMode: "chat" } };
+      expect((await generateText(input)).text).toBe("ok");
+      expect((await streamText({ ...input, reasoning: { effort: "low" } }).collect()).text).toBe("ok");
+      for (const [url, init] of fetchMock.mock.calls) {
+        expect(url).toBe("https://api.openai.com/v1/chat/completions");
+        const body = JSON.parse(String(init.body));
+        expect(body).toMatchObject({ model: modelId, max_completion_tokens: 96 });
+        expect(body).not.toHaveProperty("max_tokens");
+        expect(body.reasoning_effort).toBe(body.stream ? "low" : undefined);
+      }
+    });
+
+    it("rejects unsupported reasoning, sampling, and Chat tools before sending a request", async () => {
+      const model = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch })(modelId);
+      const messages = [createTextMessage("user", "hello")];
+      const cases = [
+        [{ reasoning: { effort: "none" as const } }, "reasoning effort"],
+        [{ providerOptions: { reasoning: { effort: "minimal" as const } } }, "reasoning effort"],
+        [{ providerOptions: { apiMode: "chat" as const, reasoning_effort: "none" } }, "reasoning effort"],
+        [{ temperature: 0 }, "sampling or logprobs"],
+        [{ topP: 0.5 }, "sampling or logprobs"],
+        [{ providerOptions: { top_logprobs: 1 } }, "sampling or logprobs"],
+        [{ providerOptions: { include: ["message.output_text.logprobs"] } }, "sampling or logprobs"],
+        [{ providerOptions: { apiMode: "chat" as const, logprobs: true } }, "sampling or logprobs"],
+        [{
+          tools: { sum: tool({ name: "sum", schema: z.object({}), execute: () => 5 }) },
+          providerOptions: { apiMode: "chat" as const }
+        }, "requires the Responses API"]
+      ] as const;
+      for (const [options, error] of cases) {
+        await expect(model.generate({ messages, ...options })).rejects.toThrow(error);
+        await expect(model.stream({ messages, ...options })).rejects.toThrow(error);
+      }
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
   });
 
   it("rejects incompatible Astra settings before sending requests", async () => {
