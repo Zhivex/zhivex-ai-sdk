@@ -1,6 +1,7 @@
 import { toJSONSchema } from "zod";
 import { UnsupportedFeatureError, isHostedToolDefinition } from "@zhivex-ai/core/provider";
 import type { ModelCapabilities, ModelGenerateInput, ModelMessage } from "@zhivex-ai/core/contracts";
+import { GEMINI_4_NEON, neonThinkingLevels, validateNeonOutputLimit } from "./neon.js";
 import { capabilities } from "./capabilities.js";
 import { toGeminiSchema } from "./messages.js";
 
@@ -28,7 +29,8 @@ const profile = (efforts: GeminiTextProfile["reasoningEfforts"]): GeminiTextProf
 });
 
 export const geminiTextProfiles: Readonly<Record<string, GeminiTextProfile>> = Object.freeze({
-  // Hydrogen defaults to high; leave omitted thinking levels to the provider.
+  // Neon and Hydrogen default to high; leave omitted thinking levels to the provider.
+  [GEMINI_4_NEON]: profile(neonThinkingLevels),
   "gemini-4-hydrogen": profile(["low", "medium", "high", "xhigh"]),
   // Provider default thinking level is medium when the request omits thinkingLevel.
   "gemini-4-carbon": profile(["low", "medium", "high"]),
@@ -51,7 +53,8 @@ export const modelCapabilities = (
   textProfile(modelId)
     ? {
         ...baseCapabilities,
-        reasoningEfforts: [...reasoningEffortsForModel(modelId)]
+        reasoningEfforts: [...reasoningEffortsForModel(modelId)],
+        ...(modelId === GEMINI_4_NEON ? { contextCaching: false, explicitPromptCaching: false, embeddings: false, parallelToolCalls: true } : {})
       }
     : baseCapabilities;
 
@@ -100,10 +103,11 @@ export const assertCurrentGeminiGenerateInput = (
     if (isHostedToolDefinition(tool) && ["googleSearch", "google_search"].includes(tool.type) && tool.config && typeof tool.config === "object" &&
       ("max_tool_calls" in tool.config || "max_uses" in tool.config)) throw new UnsupportedFeatureError("Gemini Google Search tool-call limits are not verified.");
   }
-  if ((modelId === "gemini-4-carbon" || modelId === "gemini-4-hydrogen") &&
+  if ((modelId === "gemini-4-carbon" || modelId === "gemini-4-hydrogen" || modelId === GEMINI_4_NEON) &&
       (input.providerOptions?.cachedContent !== undefined || input.providerOptions?.cached_content !== undefined)) {
     throw new UnsupportedFeatureError(`Model "${modelId}" supports implicit caching only.`);
   }
+  if (modelId === GEMINI_4_NEON) validateNeonOutputLimit(input.maxTokens);
   const currentProfile = textProfile(modelId);
   if (!currentProfile) {
     return;
@@ -149,7 +153,7 @@ export const assertCurrentGeminiGenerateInput = (
 
 export const assertCurrentGeminiInteractionBody = (body: Record<string, unknown>) => {
   const modelId = typeof body.model === "string" ? body.model : undefined;
-  if ((modelId === "gemini-4-carbon" || modelId === "gemini-4-hydrogen") && (body.cachedContent !== undefined || body.cached_content !== undefined)) {
+  if ((modelId === "gemini-4-carbon" || modelId === "gemini-4-hydrogen" || modelId === GEMINI_4_NEON) && (body.cachedContent !== undefined || body.cached_content !== undefined)) {
     throw new UnsupportedFeatureError(`Model "${modelId}" supports implicit caching only.`);
   }
   if (modelId === "gemini-omni-1.2-flash") {
@@ -162,14 +166,14 @@ export const assertCurrentGeminiInteractionBody = (body: Record<string, unknown>
       throw new UnsupportedFeatureError("Gemini Omni 1.2 Flash does not support system instructions or sampling controls.");
     }
   }
-  if (modelId === "gemini-4-hydrogen") {
+  if (modelId === "gemini-4-hydrogen" || modelId === GEMINI_4_NEON) {
     const config = (body.generation_config ?? body.generationConfig ?? {}) as Record<string, unknown>;
     const effort = config.thinking_level ?? config.thinkingLevel;
     if (effort !== undefined && !reasoningEffortsForModel(modelId).some((supported) => supported === String(effort).toLowerCase())) {
-      throw new UnsupportedFeatureError("Gemini 4 Hydrogen supports thinking levels low, medium, high, and xhigh.");
+      throw new UnsupportedFeatureError(`Model "${modelId}" supports thinking levels low, medium, high, and xhigh.`);
     }
     if (config.thinking_budget !== undefined || config.thinkingBudget !== undefined) {
-      throw new UnsupportedFeatureError("Gemini 4 Hydrogen requires thinking levels instead of budgets.");
+      throw new UnsupportedFeatureError(`Model "${modelId}" requires thinking levels instead of budgets.`);
     }
   }
   const currentProfile = modelId ? textProfile(modelId) : undefined;
@@ -231,7 +235,7 @@ const mapReasoning = (modelId: string, input: ModelGenerateInput) => {
       throw new UnsupportedFeatureError(`Provider "gemini" does not support "reasoning.effort=none" for ${family} models.`);
     }
 
-    if (input.reasoning.effort === "xhigh" && modelId !== "gemini-4-hydrogen") {
+    if (input.reasoning.effort === "xhigh" && modelId !== "gemini-4-hydrogen" && modelId !== GEMINI_4_NEON) {
       throw new UnsupportedFeatureError('Provider "gemini" does not support "reasoning.effort=xhigh".');
     }
 
@@ -243,7 +247,7 @@ const mapReasoning = (modelId: string, input: ModelGenerateInput) => {
 
     return input.reasoning.effort !== undefined
       ? {
-          thinkingLevel: input.reasoning.effort
+          thinkingLevel: modelId === GEMINI_4_NEON ? input.reasoning.effort.toUpperCase() : input.reasoning.effort
         }
       : undefined;
   }

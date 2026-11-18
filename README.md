@@ -249,6 +249,14 @@ catalog records the 65,536-token synchronous output limit; larger outputs requir
 background long decode. Introductory token prices expire November 30, 2026;
 future rates are documented but never activated automatically.
 
+Neon (`gemini-4-neon`) is available through the paid Gemini API and on
+Vertex (`global`, `us`, or `eu`). Both adapters accept `low`, `medium`, `high`,
+and `xhigh` reasoning. Set `maxTokens` above 65,536 to allow a long decode
+across multiple segments within the shared 1,048,576-token context window.
+The adapters follow the provider's checkpoints and report usage across segments.
+See the [Gemini adapter](packages/gemini/README.md#gemini-4-neon) and
+[Vertex adapter](packages/vertex/README.md#gemini-4-neon).
+
 Hydrogen (`gemini-4-hydrogen`) is supported by Gemini and Vertex with
 `reasoning: { effort: "xhigh" }`, alongside `low`, `medium`, and `high`.
 Omitting effort preserves the provider default (`high`). It uses implicit caching

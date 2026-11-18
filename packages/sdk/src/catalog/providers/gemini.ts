@@ -2,10 +2,12 @@ import { defineModelCatalogFragment } from "../fragment.js";
 
 export const geminiCatalogFragment = defineModelCatalogFragment({
   provider: "gemini",
-  revision: "2026-11-12",
+  revision: "2026-11-18",
   verifiedAt: "2026-11-04",
   pricingEffectiveAt: "2026-11-04",
   sources: [
+    "https://aistudio.google.com/docs/models/gemini-4-neon",
+    "https://aistudio.google.com/docs/pricing#gemini-4-neon",
     "https://aistudio.google.com/docs/thinking",
     "https://aistudio.google.com/docs/pricing#gemini-4-hydrogen",
     "https://aistudio.google.com/docs/decisions-api",
@@ -19,6 +21,18 @@ export const geminiCatalogFragment = defineModelCatalogFragment({
     "https://ai.google.dev/gemini-api/docs/deprecations"
   ],
   entries: [
+    {
+      provider: "gemini", modelId: "gemini-4-neon",
+      inputCostPer1kTokens: 0.003, cachedInputCostPer1kTokens: 0.00015, outputCostPer1kTokens: 0.015,
+      contextWindowTokens: 1048576, contextWindowType: "combined", maxOutputTokens: 1048576,
+      pricingTerms: { source: "https://aistudio.google.com/docs/pricing#gemini-4-neon", verifiedAt: "2026-11-18", notes: "Standard paid tier; implicit caching only." },
+      evidence: {
+        contextWindowTokens: { source: "https://aistudio.google.com/docs/models/gemini-4-neon", sourceType: "primary", verifiedAt: "2026-11-18" },
+        contextWindowType: { source: "https://aistudio.google.com/docs/models/gemini-4-neon", sourceType: "primary", verifiedAt: "2026-11-18" },
+        maxOutputTokens: { source: "https://aistudio.google.com/docs/models/gemini-4-neon", sourceType: "primary", verifiedAt: "2026-11-18", conditions: ["Default and per-segment limit is 65,536 tokens. Long decodes share the 1,048,576-token limit with input."] }
+      },
+      recommendedFor: ["chat", "reasoning", "speed", "vision", "tools"]
+    },
     {
       provider: "gemini", modelId: "gemini-4-hydrogen",
       inputCostPer1kTokens: 0.0015, cachedInputCostPer1kTokens: 0.000075,

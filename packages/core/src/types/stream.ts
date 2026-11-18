@@ -17,6 +17,8 @@ import type {
 export interface StreamTextDeltaEvent {
   type: "text-delta";
   textDelta: string;
+  /** Metadata that belongs to this text part when replaying model history. */
+  providerMetadata?: Record<string, JsonValue>;
 }
 
 export interface StreamToolCallEvent {

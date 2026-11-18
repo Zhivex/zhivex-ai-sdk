@@ -1,9 +1,10 @@
 import type { HostedToolUsage } from "@zhivex-ai/core/provider";
+import { GEMINI_4_NEON } from "./neon.js";
 
 export const createGeminiSearchUsage = (modelId: string, attemptId: string) => {
   let quantity: number | undefined;
   let responseId: string | undefined;
-  const modern = /^gemini-3(?:[.-]|$)/.test(modelId);
+  const modern = modelId === GEMINI_4_NEON || /^gemini-3(?:[.-]|$)/.test(modelId);
   const legacy = /^gemini-(?:2(?:\.\d+)?|1(?:\.\d+)?)(?:-|$)/.test(modelId);
   return (response?: any): HostedToolUsage => {
     if (typeof response?.responseId === "string" && response.responseId.length <= 1024) responseId = response.responseId;

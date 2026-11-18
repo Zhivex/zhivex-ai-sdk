@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { createMockLanguageModel } from "../src/agent-evaluation.js";
+import { streamText } from "../src/generate-text.js";
 import { streamObject } from "../src/generate-object.js";
 import { streamSSE } from "../src/stream.js";
 import fixtures from "./fixtures/object-stream-legacy-partials.json";
@@ -67,6 +68,23 @@ describe("object stream optimization compatibility", () => {
     expect(types).toContain("error");
     await expect(result.collect()).rejects.toThrow();
   });
+});
+
+it("preserves streamed text metadata on the original text part", async () => {
+  const providerMetadata = { signature: "provider-signature" };
+  const model = createMockLanguageModel({ streamEvents: [[
+    { type: "text-delta", textDelta: "before " },
+    { type: "text-delta", textDelta: "signed", providerMetadata },
+    { type: "text-delta", textDelta: " after" },
+    { type: "finish", finishReason: "stop" }
+  ]] });
+  const result = await streamText({ model, prompt: "test" }).collect();
+  expect(result.text).toBe("before signed after");
+  expect(result.messages.at(-1)?.parts).toEqual([
+    { type: "text", text: "before " },
+    { type: "text", text: "signed", providerMetadata },
+    { type: "text", text: " after" }
+  ]);
 });
 
 const responseFor = (text: string, size: number, cancel = vi.fn()) => {

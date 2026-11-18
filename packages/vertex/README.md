@@ -1205,6 +1205,32 @@ Repository: <https://github.com/Zhivex/zhivex-ai-sdk>
 
 Import Google hosted-tool helpers from this package for new code; Core/SDK imports remain compatible. See [ownership and support boundaries](../../docs/ARCHITECTURE.md#provider-implementation-boundaries).
 
+### Gemini 4 Neon
+
+Use `provider("gemini-4-neon")` with `reasoning: { effort: "xhigh" }` in
+`generateText` or `streamText`. Other levels are `low`, `medium`, and `high`
+(the provider default). Neon manages sampling and caches matching prompt
+prefixes implicitly.
+
+Set `maxTokens` above 65,536 to allow multiple output segments. Input, reasoning,
+and output share a 1,048,576-token budget. The adapter follows continuation
+checkpoints, preserves the configured output budget, and adds up billed usage
+from all segments. The adapter selects `v1beta1` for Neon when you use the default endpoint.
+For long decodes with an explicit API version or endpoint, use `v1beta1`.
+Google Cloud makes the model available to eligible projects in `global`, `us`, and `eu`.
+
+For Interactions, set `generationConfig: { max_output_tokens: 120000, thinking_level: "xhigh" }`.
+Foreground `create` and `stream` follow continuations automatically. Use
+`automaticContinuation: false` to control the loop yourself, or `background: true`
+with `store: true` for a server-managed job. For stored manual continuations,
+pass `previousInteractionId` and `continuationToken` without `input`. For
+`store: false`, resend the original `input` with the token. Streaming exposes
+native checkpoint events in `provider-data` so callers can resume interrupted
+requests. A response that exhausts the requested output budget can be resumed
+with a larger budget.
+
+See the [official model documentation](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/guides/gemini-4-neon).
+
 ### Gemini 4 Hydrogen
 
 Use `provider("gemini-4-hydrogen")` with `reasoning: { effort: "xhigh" }` in

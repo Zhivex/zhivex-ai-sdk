@@ -1,5 +1,11 @@
 # @zhivex-ai/core
 
+## 1.41.0
+
+### Minor Changes
+
+- 8367b5d: Support Gemini 4 Neon on Gemini and Vertex with four thinking levels, model-specific validation, and catalog pricing and limits. Follow long-decode continuations across GenerateContent and foreground Interactions, and expose Interaction checkpoints for explicit resumption.
+
 ## 1.40.1
 
 ### Patch Changes

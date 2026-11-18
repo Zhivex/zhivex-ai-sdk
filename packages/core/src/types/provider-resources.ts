@@ -60,7 +60,9 @@ export interface BatchJob {
 
 export type InteractionStatus =
   | "in_progress"
+  | "queued"
   | "requires_action"
+  | "requires_continuation"
   | "completed"
   | "failed"
   | "cancelled"
@@ -108,6 +110,12 @@ export interface Interaction {
   createTime?: string;
   updateTime?: string;
   previousInteractionId?: string;
+  /** Provider token for continuing this generation from its last checkpoint. */
+  continuationToken?: string;
+  /** Ordered IDs of the segments combined by automatic continuation. */
+  continuationIds?: string[];
+  /** Input tokens in the first segment, before any continuation re-prefill. */
+  initialInputTokens?: number;
   environmentId?: string;
   steps?: InteractionStep[];
   /**
@@ -302,8 +310,12 @@ export interface BatchesClient<TProviderOptions extends ProviderOptions = Provid
 export interface InteractionCreateInput<TProviderOptions extends ProviderOptions = ProviderOptions> extends RetryOptions {
   modelId?: string;
   agent?: string;
-  input: unknown;
+  /** Omit for stored continuations that supply previousInteractionId and continuationToken. */
+  input?: unknown;
   previousInteractionId?: string;
+  continuationToken?: string;
+  /** Disable automatic following of foreground continuation checkpoints. */
+  automaticContinuation?: boolean;
   tools?: ToolCollection;
   systemInstruction?: string;
   responseFormat?: JsonValue | JsonValue[];
