@@ -237,6 +237,9 @@
       },
     },
   },
+  "patchedDependencies": {
+    "picomatch@4.0.7": "patches/picomatch@4.0.7.patch",
+  },
   "overrides": {
     "@hono/node-server": "^2.1.6",
     "body-parser": "^2.4.0",
