@@ -51,4 +51,22 @@ describe("OpenAI model profile policy", () => {
     expect(createOpenAI({ apiKey: "test" })("gpt-4-0613").capabilities.tools).toBe(true);
     expect(createOpenAI({ apiKey: "test" })("gpt-6-astra-2026-01-01-extra").capabilities.tools).toBe(false);
   });
+
+  it("advertises GPT-6.2 capabilities for the published model IDs only", () => {
+    const provider = createOpenAI({ apiKey: "test" });
+    for (const id of ["gpt-6.2-astra", "gpt-6.2-sol"]) {
+      expect(provider(id).capabilities).toMatchObject({
+        streaming: true, tools: true, vision: true, structuredOutput: true, reasoning: true,
+        embeddings: false, audioInput: false, explicitPromptCaching: true,
+        reasoningEfforts: ["low", "medium", "high", "xhigh", "max"],
+        agentCapabilities: {
+          multiAgent: true, toolSearch: true, computerUse: true, shell: true, applyPatch: true,
+          skills: true, programmaticToolCalling: true
+        }
+      });
+    }
+    for (const id of ["gpt-6.2", "gpt-6.2-terra", "gpt-6.2-astra-preview", "gpt-6.2-sol-2026-11-17"]) {
+      expect(provider(id).capabilities).toMatchObject({ tools: false, reasoning: false });
+    }
+  });
 });

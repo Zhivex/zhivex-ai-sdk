@@ -13,6 +13,46 @@ import {
 } from "../src/index.js";
 
 describe("SDK model catalog ownership", () => {
+  it.each([
+    ["gpt-6.2-astra", 0.008, 0.0004, 0.01, 0.04],
+    ["gpt-6.2-sol", 0.002, 0.0001, 0.0025, 0.01]
+  ])("records the published context and Standard pricing for %s", (modelId, input, cached, write, output) => {
+    expect(defaultModelCatalog.find("openai", modelId)).toMatchObject({
+      contextWindowTokens: 1_050_000,
+      contextWindowType: "combined",
+      maxInputTokens: 922_000,
+      maxOutputTokens: 128_000,
+      evidence: {
+        contextWindowTokens: { source: `https://developers.openai.com/api/docs/models/${modelId}`, verifiedAt: "2026-11-17" }
+      },
+      inputCostPer1kTokens: input,
+      cachedInputCostPer1kTokens: cached,
+      cacheWriteCostPer1kTokens: write,
+      outputCostPer1kTokens: output,
+      recommendedFor: ["chat", "reasoning", "tools", "vision"]
+    });
+
+    const cost = (inputTokens: number) => calculateModelCost({
+      catalog: defaultModelCatalog,
+      provider: "openai",
+      modelId,
+      usage: {
+        inputTokens, cachedInputTokens: 500, outputTokens: 100,
+        cacheWriteTokensDetails: { ttl30mTokens: 100, ttl12hTokens: 100 }
+      }
+    });
+    const standard = cost(272_000);
+    expect(standard).toMatchObject({ status: "known", longContext: false });
+    expect(standard.cacheWriteDetails?.ttl12h.ratePer1kTokens).toBeCloseTo(2.5 * input);
+    const long = cost(272_001);
+    expect(long).toMatchObject({ status: "known", longContext: true });
+    expect(long.components.input?.ratePer1kTokens).toBeCloseTo(2 * input);
+    expect(long.components.cachedInput?.ratePer1kTokens).toBeCloseTo(2 * cached);
+    expect(long.components.output?.ratePer1kTokens).toBeCloseTo(1.5 * output);
+    expect(long.cacheWriteDetails?.ttl30m.ratePer1kTokens).toBeCloseTo(2 * write);
+    expect(long.cacheWriteDetails?.ttl12h.ratePer1kTokens).toBeCloseTo(5 * input);
+  });
+
   it("includes current Vertex open models without inventing retirement dates", () => {
     for (const modelId of ["zai-org/glm-5.2-maas", "deepseek-ai/deepseek-v4.1-flash-maas", "google/gemma-4-26b-a4b-it-maas", "openai/gpt-oss-120b-maas", "meta/llama-4-maverick-17b-128e-instruct-maas", "meta/llama-4-scout-17b-16e-instruct-maas"]) {
       const entry = defaultModelCatalog.find("vertex", modelId);
@@ -37,10 +77,10 @@ describe("SDK model catalog ownership", () => {
     expect(rootDefaultModelCatalog).toBe(defaultModelCatalog);
     expect(defaultModelCatalog).not.toBe(coreCompatibilityCatalog);
     expect(defaultModelCatalog.metadata).toMatchObject({
-      snapshotVersion: "2026-11-16",
+      snapshotVersion: "2026-11-17",
       policy: { data: "rolling", updates: "package-release" },
       pricing: {
-        version: "2026-11-12",
+        version: "2026-11-17",
         source: "zhivex-ai-sdk-default-catalog"
       }
     });
@@ -65,7 +105,7 @@ describe("SDK model catalog ownership", () => {
       recommendedFor: ["chat", "reasoning", "tools", "vision"]
     });
     const entries = defaultModelCatalog.list();
-    expect(entries).toHaveLength(308);
+    expect(entries).toHaveLength(310);
     expect(defaultModelCatalog.find("vertex", "virtual-try-on-001")).toMatchObject({ provider: "vertex", modelId: "virtual-try-on-001" });
     expect(defaultModelCatalog.find("vertex", "multimodalembedding@001")?.lifecycle).toEqual({
       retiredAt: "2027-04-01",
@@ -111,12 +151,35 @@ describe("SDK model catalog ownership", () => {
     expect(listRootFragments).toBe(listDefaultModelCatalogFragments);
     const fragments = listDefaultModelCatalogFragments();
     expect(fragments).toHaveLength(14);
-    expect(fragments.reduce((total, fragment) => total + fragment.modelCount, 0)).toBe(308);
+    expect(fragments.reduce((total, fragment) => total + fragment.modelCount, 0)).toBe(310);
     expect(fragments.find((fragment) => fragment.provider === "openai")).toMatchObject({
-      revision: "2026-11-07",
-      verifiedAt: "2026-11-07",
-      pricingEffectiveAt: "2026-11-07",
-      sources: ["https://developers.openai.com/api/docs/models/gpt-4o-mini", "https://developers.openai.com/api/docs/deprecations", "https://developers.openai.com/api/docs/guides/conversation-state", "https://developers.openai.com/api/docs/models/gpt-6-sol", "https://developers.openai.com/api/docs/models/gpt-6-luna", "https://developers.openai.com/api/docs/models/gpt-6-astra", "https://developers.openai.com/api/docs/models/gpt-6-cyber", "https://developers.openai.com/api/docs/guides/daybreak", "https://developers.openai.com/api/docs/models/gpt-6.1-sol", "https://developers.openai.com/api/docs/models/gpt-6.1-terra", "https://developers.openai.com/api/docs/pricing", "https://openai.com/index/introducing-gpt-6-1-terra", "https://developers.openai.com/api/docs/models/gpt-image-2.5-flare", "https://developers.openai.com/api/docs/models/gpt-image-2.5-sunburst", "https://developers.openai.com/api/docs/models/gpt-image-2.6-flare", "https://developers.openai.com/api/docs/models/gpt-image-2.6-sunburst", "https://developers.openai.com/api/docs/guides/image-generation", "https://developers.openai.com/api/docs/guides/image-prompting", "catalog-release:2026-08-16", "https://developers.openai.com/api/docs/guides/live"]
+      revision: "2026-11-17",
+      verifiedAt: "2026-11-17",
+      pricingEffectiveAt: "2026-11-17",
+      sources: [
+        "https://developers.openai.com/api/docs/models/gpt-4o-mini",
+        "https://developers.openai.com/api/docs/deprecations",
+        "https://developers.openai.com/api/docs/guides/conversation-state",
+        "https://developers.openai.com/api/docs/models/gpt-6-sol",
+        "https://developers.openai.com/api/docs/models/gpt-6-luna",
+        "https://developers.openai.com/api/docs/models/gpt-6-astra",
+        "https://developers.openai.com/api/docs/models/gpt-6-cyber",
+        "https://developers.openai.com/api/docs/guides/daybreak",
+        "https://developers.openai.com/api/docs/models/gpt-6.1-sol",
+        "https://developers.openai.com/api/docs/models/gpt-6.1-terra",
+        "https://developers.openai.com/api/docs/models/gpt-6.2-astra",
+        "https://developers.openai.com/api/docs/models/gpt-6.2-sol",
+        "https://developers.openai.com/api/docs/pricing",
+        "https://openai.com/index/introducing-gpt-6-1-terra",
+        "https://developers.openai.com/api/docs/models/gpt-image-2.5-flare",
+        "https://developers.openai.com/api/docs/models/gpt-image-2.5-sunburst",
+        "https://developers.openai.com/api/docs/models/gpt-image-2.6-flare",
+        "https://developers.openai.com/api/docs/models/gpt-image-2.6-sunburst",
+        "https://developers.openai.com/api/docs/guides/image-generation",
+        "https://developers.openai.com/api/docs/guides/image-prompting",
+        "catalog-release:2026-08-16",
+        "https://developers.openai.com/api/docs/guides/live"
+      ]
     });
     expect(fragments.find((fragment) => fragment.provider === "zai")).toMatchObject({
       revision: "2026-11-04",

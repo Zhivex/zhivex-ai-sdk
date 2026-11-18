@@ -42,6 +42,8 @@ console.log(text);
 
 `register: true` makes the `"provider/model"` string resolve. Unknown providers and a missing `apiKey` throw `ModelResolutionError` before any request. A model object from `createOpenAI()` still works. pnpm and Yarn install the same package. See the [consumer compatibility matrix](./SUPPORT.md#installation-and-consumer-compatibility).
 
+The OpenAI adapter supports `gpt-6.2-astra` and `gpt-6.2-sol` through the Responses API by default. The SDK catalog includes their token limits and Standard pricing. See the [GPT-6.2 provider guide](./packages/openai/README.md#gpt-62-astra-and-sol).
+
 ### 2. Governance
 
 Install `zod` when the app defines tool or object schemas, and install only the adapter packages you call. The call below is the same with OpenAI or Qwen. Only the model line changes. `gpt-6-astra` and `qwen3.8-flash` are both in the SDK catalog.

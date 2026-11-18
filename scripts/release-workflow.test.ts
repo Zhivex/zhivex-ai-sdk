@@ -128,7 +128,8 @@ describe("release workflow", () => {
 
   it("uses immutable installs, an audit gate, OIDC, and bounded jobs", () => {
     expect(workflow).toContain("bun install --frozen-lockfile --ignore-scripts");
-    expect(workflow).toContain("bun audit");
+    expect(workflow).toContain("bun run audit:dependencies");
+    expect(ciWorkflow).toContain("bun run audit:dependencies");
     expect(workflow).toContain("id-token: write");
     expect(workflow).toContain("timeout-minutes:");
   });

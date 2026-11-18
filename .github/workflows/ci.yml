@@ -44,7 +44,7 @@ jobs:
         run: bun run lock:check
 
       - name: Audit dependencies
-        run: bun audit
+        run: bun run audit:dependencies
 
       - name: Provider registry coherence
         run: bun run provider:check

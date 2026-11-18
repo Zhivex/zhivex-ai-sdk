@@ -2,9 +2,9 @@ import { defineModelCatalogFragment } from "../fragment.js";
 
 export const openaiCatalogFragment = defineModelCatalogFragment({
   provider: "openai",
-  revision: "2026-11-07",
-  verifiedAt: "2026-11-07",
-  pricingEffectiveAt: "2026-11-07",
+  revision: "2026-11-17",
+  verifiedAt: "2026-11-17",
+  pricingEffectiveAt: "2026-11-17",
   sources: [
     "https://developers.openai.com/api/docs/models/gpt-4o-mini",
     "https://developers.openai.com/api/docs/deprecations",
@@ -16,6 +16,8 @@ export const openaiCatalogFragment = defineModelCatalogFragment({
     "https://developers.openai.com/api/docs/guides/daybreak",
     "https://developers.openai.com/api/docs/models/gpt-6.1-sol",
     "https://developers.openai.com/api/docs/models/gpt-6.1-terra",
+    "https://developers.openai.com/api/docs/models/gpt-6.2-astra",
+    "https://developers.openai.com/api/docs/models/gpt-6.2-sol",
     "https://developers.openai.com/api/docs/pricing",
     "https://openai.com/index/introducing-gpt-6-1-terra",
     "https://developers.openai.com/api/docs/models/gpt-image-2.5-flare",
@@ -27,6 +29,58 @@ export const openaiCatalogFragment = defineModelCatalogFragment({
     "catalog-release:2026-08-16",
     "https://developers.openai.com/api/docs/guides/live"],
   entries: [
+    {
+      provider: "openai",
+      modelId: "gpt-6.2-astra",
+      contextWindowTokens: 1_050_000,
+      contextWindowType: "combined",
+      maxInputTokens: 922_000,
+      maxOutputTokens: 128_000,
+      evidence: {
+        contextWindowTokens: { source: "https://developers.openai.com/api/docs/models/gpt-6.2-astra", sourceType: "primary", verifiedAt: "2026-11-17" },
+        contextWindowType: { source: "https://developers.openai.com/api/docs/models/gpt-6.2-astra", sourceType: "primary", verifiedAt: "2026-11-17" },
+        maxInputTokens: { source: "https://developers.openai.com/api/docs/models/gpt-6.2-astra", sourceType: "primary", verifiedAt: "2026-11-17" },
+        maxOutputTokens: { source: "https://developers.openai.com/api/docs/models/gpt-6.2-astra", sourceType: "primary", verifiedAt: "2026-11-17" },
+        inputCostPer1kTokens: { source: "https://developers.openai.com/api/docs/pricing", sourceType: "primary", verifiedAt: "2026-11-17" },
+        outputCostPer1kTokens: { source: "https://developers.openai.com/api/docs/pricing", sourceType: "primary", verifiedAt: "2026-11-17" }
+      },
+      inputCostPer1kTokens: 0.008,
+      cachedInputCostPer1kTokens: 0.0004,
+      cacheWriteCostPer1kTokens: 0.01,
+      outputCostPer1kTokens: 0.04,
+      longContextPricing: {
+        inputTokenThreshold: 272_000,
+        inputMultiplier: 2,
+        outputMultiplier: 1.5
+      },
+      recommendedFor: ["chat", "reasoning", "tools", "vision"]
+    },
+    {
+      provider: "openai",
+      modelId: "gpt-6.2-sol",
+      contextWindowTokens: 1_050_000,
+      contextWindowType: "combined",
+      maxInputTokens: 922_000,
+      maxOutputTokens: 128_000,
+      evidence: {
+        contextWindowTokens: { source: "https://developers.openai.com/api/docs/models/gpt-6.2-sol", sourceType: "primary", verifiedAt: "2026-11-17" },
+        contextWindowType: { source: "https://developers.openai.com/api/docs/models/gpt-6.2-sol", sourceType: "primary", verifiedAt: "2026-11-17" },
+        maxInputTokens: { source: "https://developers.openai.com/api/docs/models/gpt-6.2-sol", sourceType: "primary", verifiedAt: "2026-11-17" },
+        maxOutputTokens: { source: "https://developers.openai.com/api/docs/models/gpt-6.2-sol", sourceType: "primary", verifiedAt: "2026-11-17" },
+        inputCostPer1kTokens: { source: "https://developers.openai.com/api/docs/pricing", sourceType: "primary", verifiedAt: "2026-11-17" },
+        outputCostPer1kTokens: { source: "https://developers.openai.com/api/docs/pricing", sourceType: "primary", verifiedAt: "2026-11-17" }
+      },
+      inputCostPer1kTokens: 0.002,
+      cachedInputCostPer1kTokens: 0.0001,
+      cacheWriteCostPer1kTokens: 0.0025,
+      outputCostPer1kTokens: 0.01,
+      longContextPricing: {
+        inputTokenThreshold: 272_000,
+        inputMultiplier: 2,
+        outputMultiplier: 1.5
+      },
+      recommendedFor: ["chat", "reasoning", "tools", "vision"]
+    },
     {
       "provider": "openai",
       "modelId": "gpt-6.1-terra",

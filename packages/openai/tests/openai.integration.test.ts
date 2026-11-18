@@ -3,14 +3,15 @@ import { z } from "zod";
 
 import { embed, generateObject, generateText, streamText, tool } from "@zhivex-ai/core";
 import { createOpenAI } from "../src/index.js";
+import { isOpenAIGpt62Model, supportsOpenAIModernResponses } from "../src/model-profiles.js";
 
 const apiKey = process.env.OPENAI_API_KEY;
 const baseURL = process.env.OPENAI_BASE_URL;
 const textModelId = process.env.OPENAI_INTEGRATION_MODEL ?? "gpt-5.6-luna";
 const embeddingModelId = process.env.OPENAI_INTEGRATION_EMBEDDING_MODEL ?? "text-embedding-3-small";
-const usesOpenAIGpt56Controls = /^(?:gpt-5\.6|gpt-6-(?:astra|sol|luna))(?:$|-)/i.test(textModelId);
-const deterministicTemperature = usesOpenAIGpt56Controls ? {} : { temperature: 0 };
-const generationMaxTokens = usesOpenAIGpt56Controls ? 128 : 32;
+const usesModernResponses = supportsOpenAIModernResponses(textModelId);
+const deterministicTemperature = usesModernResponses ? {} : { temperature: 0 };
+const generationMaxTokens = usesModernResponses ? 128 : 32;
 
 const describeIntegration = apiKey ? describe : describe.skip;
 
@@ -32,6 +33,19 @@ describeIntegration("openai adapter integration", () => {
     expect(result.text.toLowerCase()).toContain("integration-openai-ok");
     expect(result.finishReason).toBeDefined();
     expect(result.usage?.totalTokens).toBeGreaterThan(0);
+  });
+
+  it.skipIf(!isOpenAIGpt62Model(textModelId))("respects the GPT-6.2 token limit in Chat Completions", async () => {
+    const result = await generateText({
+      model: provider()(textModelId),
+      prompt: "Reply with just OK.",
+      maxTokens: generationMaxTokens,
+      providerOptions: { apiMode: "chat", store: false }
+    });
+
+    expect(result.text.trim()).toBe("OK");
+    expect(result.usage?.outputTokens).toBeGreaterThan(0);
+    expect(result.usage?.outputTokens).toBeLessThanOrEqual(generationMaxTokens);
   });
 
   it("streams text against the real OpenAI API", async () => {
@@ -58,7 +72,7 @@ describeIntegration("openai adapter integration", () => {
       model: provider()(textModelId),
       prompt: "Call the sum tool with a=2 and b=3, then answer with only the numeric result.",
       ...deterministicTemperature,
-      maxTokens: usesOpenAIGpt56Controls ? 256 : 128,
+      maxTokens: usesModernResponses ? 256 : 128,
       maxSteps: 2,
       tools: {
         sum: tool({

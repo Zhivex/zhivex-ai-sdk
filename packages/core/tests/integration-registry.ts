@@ -534,7 +534,8 @@ const allIntegrationLanguageProviders: IntegrationLanguageProvider[] = [
               baseURL: metaBaseURL
             })(metaTextModelId),
           supports: metaSupports,
-          textMaxTokens: 256,
+          // Generated reasoning can exhaust the shared output budget before text is emitted.
+          textMaxTokens: 1024,
           toolMaxTokens: 512,
           reasoningMaxTokens: 512
         } satisfies IntegrationLanguageProvider

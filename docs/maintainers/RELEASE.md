@@ -27,6 +27,7 @@ Run the standard gates:
 ```bash
 bun run docs:check
 bun run typecheck
+bun run audit:dependencies
 bun run test
 bun run build
 bun run smoke:packages
@@ -42,6 +43,8 @@ bun run smoke:providers
 Missing credentials are reported as skipped, not passed. Save the report in release notes or the release checklist when live provider coverage matters.
 
 `smoke:packages` packs every workspace package, installs the tarballs together in an isolated temporary Node consumer, imports every JavaScript export, and exercises runtime-sensitive Core behavior. It uses its own temporary npm cache and does not publish anything.
+
+CI and release validation use `bun run audit:dependencies`. The temporary Bun patch for `picomatch@4.0.7` rejects repeating extended globs in the development toolchain. The audit verifies the installed patch and development-only scope before excluding [GHSA-fc5q-39xc-vjpf](https://github.com/advisories/GHSA-fc5q-39xc-vjpf) from the Bun result. Once npm publishes a fixed version, upgrade the lockfile and remove the patch and its audit checks.
 
 CI also runs `node scripts/package-manager-consumer-smoke.mjs <npm|pnpm|yarn|bun>` with pinned manager versions. Before publication, its temporary loopback registry serves only the exact packed `@zhivex-ai` batch, retaining package manifests, internal ranges and artifact hashes. Other dependencies still come from npm. A missing or incompatible internal candidate fails installation rather than falling back to an older published SDK package. Runtime smoke tests use deterministic providers. After publication, use `--registry=public` to validate transitive resolution against npm instead of the candidate registry.
 

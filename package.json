@@ -12,6 +12,7 @@
     "packages/*"
   ],
   "scripts": {
+    "audit:dependencies": "bun run scripts/audit-dependencies.ts",
     "build": "bun run scripts/clean-dist.ts && tsc -b --force",
     "changeset": "changeset",
     "docs:check": "bun run scripts/check-docs.ts && bun run scripts/check-doc-examples.ts",
@@ -104,5 +105,8 @@
     "happy-dom": "^21.0.4",
     "undici": "^7.30.1",
     "@hono/node-server": "^2.1.6"
+  },
+  "patchedDependencies": {
+    "picomatch@4.0.7": "patches/picomatch@4.0.7.patch"
   }
 }

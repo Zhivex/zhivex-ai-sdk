@@ -63,6 +63,9 @@ export const isOpenAIGpt61SolModel = (modelId: string) =>
 export const isOpenAIGpt61TerraModel = (modelId: string) =>
   /^gpt-6\.1-terra(?:-\d{4}-\d{2}-\d{2})?$/.test(normalizeModelId(modelId));
 
+export const isOpenAIGpt62Model = (modelId: string) =>
+  /^gpt-6\.2-(?:astra|sol)$/.test(normalizeModelId(modelId));
+
 /**
  * Exact published id. The model page lists only the `gpt-6-cyber` snapshot,
  * so dated suffixes stay unrecognized.
@@ -71,7 +74,12 @@ export const isOpenAIGpt6CyberModel = (modelId: string) =>
   normalizeModelId(modelId) === "gpt-6-cyber";
 
 export const supportsOpenAIModernResponses = (modelId: string) =>
-  isOpenAIGpt56Model(modelId) || isOpenAIAstraModel(modelId) || isOpenAISolLunaModel(modelId) || isOpenAIGpt61SolModel(modelId) || isOpenAIGpt61TerraModel(modelId);
+  isOpenAIGpt56Model(modelId) ||
+  isOpenAIAstraModel(modelId) ||
+  isOpenAISolLunaModel(modelId) ||
+  isOpenAIGpt61SolModel(modelId) ||
+  isOpenAIGpt61TerraModel(modelId) ||
+  isOpenAIGpt62Model(modelId);
 
 const isOpenAIGpt55BaseModel = (modelId: string) =>
   /^gpt-5\.5(?:-\d{4}-\d{2}-\d{2})?$/.test(normalizeModelId(modelId));
@@ -120,6 +128,7 @@ const supportsOpenAIChatAudio = (modelId: string) =>
 
 export const isKnownOpenAIChatModel = (modelId: string) =>
   isOpenAIGpt6CyberModel(modelId) ||
+  isOpenAIGpt62Model(modelId) ||
   ["gpt-4-0613", "gpt-4-1106-preview", "gpt-4-0125-preview", "gpt-3.5-turbo-0125", "gpt-3.5-turbo-1106"].includes(normalizeModelId(modelId)) ||
   /^(?:gpt-(?:3\.5-turbo|4(?:o|\.1|\.5|-turbo)?(?:-mini|-nano)?|5(?:\.[1-6])?(?:-sol|-terra|-luna|-mini|-nano|-pro|-chat-latest)?|(?:6-(?:sol|luna|astra)|6\.1-(?:sol|terra)))|o[134](?:-mini|-pro)?)(?:$|-\d{4}-\d{2}-\d{2}$|-preview$)/.test(normalizeModelId(modelId)) || supportsOpenAIChatAudio(modelId);
 
@@ -154,6 +163,7 @@ export const modelCapabilities = (modelId: string, unknownPolicy: "conservative"
   ...(isOpenAIGpt6CyberModel(modelId)
     ? { embeddings: false, jsonMode: false, parallelToolCalls: false }
     : {}),
+  ...(isOpenAIGpt62Model(modelId) ? { embeddings: false } : {}),
   explicitPromptCaching: supportsOpenAIModernResponses(modelId) || isOpenAIGpt6CyberModel(modelId),
   files: supportsOpenAIModernResponses(modelId),
   reasoningEfforts: resolveOpenAIModelProfile(modelId).reasoningEfforts ? [...resolveOpenAIModelProfile(modelId).reasoningEfforts!] : undefined,
@@ -316,12 +326,13 @@ export const resolveOpenAIModelProfile = (modelId: string) => {
   const astra = isOpenAIAstraModel(modelId);
   const sol61 = isOpenAIGpt61SolModel(modelId);
   const terra61 = isOpenAIGpt61TerraModel(modelId);
+  const gpt62 = isOpenAIGpt62Model(modelId);
   const solLuna = isOpenAISolLunaModel(modelId);
   const modern = supportsOpenAIModernResponses(modelId);
-  const fixedEffort = astra || sol61;
+  const fixedEffort = astra || sol61 || gpt62;
   const effortNoneSampling = solLuna || terra61;
   return {
-    label: astra ? "GPT-6 Astra" : sol61 ? "GPT-6.1 Sol" : terra61 ? "GPT-6.1 Terra" : "GPT-6 Sol/Luna",
+    label: gpt62 ? "GPT-6.2" : astra ? "GPT-6 Astra" : sol61 ? "GPT-6.1 Sol" : terra61 ? "GPT-6.1 Terra" : "GPT-6 Sol/Luna",
     defaultApi: modern ? "responses" : "chat",
     modern,
     reasoningEfforts: modern ? (fixedEffort ? ["low", "medium", "high", "xhigh", "max"] as const : ["none", "low", "medium", "high", "xhigh", "max"] as const) : undefined,
