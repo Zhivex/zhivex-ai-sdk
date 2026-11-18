@@ -137,22 +137,35 @@ export async function* streamVertexGenerateContent(
   response: Response,
   messages: ModelMessage[],
   normalizeUsage: (value: unknown) => TokenUsage | undefined,
-  signal: AbortSignal
+  signal: AbortSignal,
+  chunks?: AsyncIterable<unknown>
 ): AsyncGenerator<StreamEvent> {
   const buffer = new VertexToolBuffer();
   let terminalReason: string | undefined;
   let usage: TokenUsage | undefined;
   let protocolFailure = false;
+  let providerRequestCount: number | undefined;
 
   try {
-    for await (const event of streamSSE(response)) {
-      if (event.data === "[DONE]") break;
-      let json: any;
-      try { json = JSON.parse(event.data); }
-      catch { throw toolError("VERTEX_STREAM_TOOL_RESPONSE_FAILED", "response_failed", usage); }
+    const input = chunks ?? (async function* () {
+      for await (const event of streamSSE(response)) {
+        if (event.data === "[DONE]") break;
+        try { yield JSON.parse(event.data); }
+        catch { throw toolError("VERTEX_STREAM_TOOL_RESPONSE_FAILED", "response_failed", usage); }
+      }
+    })();
+    for await (const value of input) {
+      const json = value as any;
       if (!json || typeof json !== "object" || Array.isArray(json) || json.error) {
         throw toolError("VERTEX_STREAM_TOOL_RESPONSE_FAILED", "response_failed", usage);
       }
+      if (chunks && json.neonContinuationToken) {
+        yield { type: "provider-data", provider: "vertex", data: {
+          type: "generate-content-continuation", continuationToken: json.neonContinuationToken
+        } };
+        continue;
+      }
+      if (chunks && json.segmentCount > 1) providerRequestCount = json.segmentCount;
       const wireUsage = json.usageMetadata ?? json.usage_metadata;
       if (wireUsage !== undefined) usage = normalizeUsage(wireUsage) ?? usage;
       const candidates = json.candidates;
@@ -169,7 +182,12 @@ export async function* streamVertexGenerateContent(
           throw toolError("VERTEX_STREAM_TOOL_CALL_INVALID", "inconsistent_metadata", usage);
         }
         buffer.add(part, usage);
-        if (typeof part.text === "string" && part.text) yield { type: "text-delta", textDelta: part.text };
+        if (typeof part.text === "string" && part.text && (!chunks || !part.thought)) {
+          yield { type: "text-delta", textDelta: part.text,
+            ...(chunks && typeof part.thoughtSignature === "string"
+              ? { providerMetadata: { geminiThoughtSignature: part.thoughtSignature } } : {})
+          };
+        }
       }
       const nextReason = candidate?.finishReason;
       if (nextReason !== undefined) {
@@ -190,7 +208,8 @@ export async function* streamVertexGenerateContent(
     }
     const { calls, finishReason: normalizedReason } = buffer.complete(terminalReason, messages, usage);
     for (const toolCall of calls) yield { type: "tool-call", toolCall };
-    yield { type: "finish", finishReason: normalizedReason, providerFinishReason: terminalReason, usage };
+    yield { type: "finish", finishReason: normalizedReason, providerFinishReason: terminalReason, usage,
+      ...(providerRequestCount !== undefined ? { providerRequestCount } : {}) };
   } catch (error) {
     signal.throwIfAborted();
     if (error instanceof ProviderToolCallError || error instanceof ProviderHTTPError) throw error;

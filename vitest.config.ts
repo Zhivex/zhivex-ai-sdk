@@ -17,6 +17,7 @@ export const workspaceAliases = {
   "@zhivex-ai/deepseek": resolve(import.meta.dirname, "packages/deepseek/src/index.ts"),
   "@zhivex-ai/zai": resolve(import.meta.dirname, "packages/zai/src/index.ts"),
   "@zhivex-ai/anthropic": resolve(import.meta.dirname, "packages/anthropic/src/index.ts"),
+  "@zhivex-ai/gemini/neon": resolve(import.meta.dirname, "packages/gemini/src/neon.ts"),
   "@zhivex-ai/gemini": resolve(import.meta.dirname, "packages/gemini/src/index.ts"),
   "@zhivex-ai/react": resolve(import.meta.dirname, "packages/react/src/index.ts"),
   "@zhivex-ai/sdk": resolve(import.meta.dirname, "packages/sdk/src/index.ts"),

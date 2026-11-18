@@ -1,8 +1,12 @@
+import {
+  assertNeonInteraction, createNeonInteraction, GEMINI_4_NEON, generateNeonContent,
+  shouldContinueNeonInteraction, streamNeonContent, streamNeonInteraction
+} from "./neon.js";
 import { createGeminiDecisionModel } from "./decision.js";
 import { withManualRedirect } from "./manual-redirect.js";
 import { toBase64 } from "./encoding.js";
 import { normalizeInteractionUsage, normalizeGenerateContentUsage } from "./usage.js";
-import { systemInstruction, mapMessages, toGeminiSchema, mapTools } from "./messages.js";
+import { systemInstruction, mapMessages, mapNeonContent, toGeminiSchema, mapTools } from "./messages.js";
 import { modelCapabilities, assertCurrentGeminiGenerateInput, assertCurrentGeminiInteractionBody, generationConfig, usesGeminiThinkingLevel } from "./model-profiles.js";
 import { createGeminiSearchUsage } from "./search-usage.js";
 import { createGroundingCollector } from "./grounding.js";
@@ -165,6 +169,8 @@ const encodeGeminiResourceName = (value: string, label: string) => {
 export interface GeminiLanguageModelOptions {
   /** Opt in to provider request logging. Defaults to false, regardless of project settings. */
   store?: boolean;
+  /** Start from a Neon GenerateContent checkpoint, using the original messages. */
+  continuationToken?: string;
   topP?: number;
   topK?: number;
   stopSequences?: string[];
@@ -458,7 +464,9 @@ const interactionContent = (step: any): InteractionContent[] =>
 const normalizeInteraction = (json: any): Interaction => {
   const steps = Array.isArray(json.steps) ? json.steps : undefined;
   const latestModelOutput = steps?.slice().reverse().find((step: any) => step?.type === "model_output");
-  const latestContent = interactionContent(latestModelOutput);
+  const latestContent = latestModelOutput
+    ? interactionContent(latestModelOutput)
+    : Array.isArray(json.outputs) ? interactionContent({ content: json.outputs }) : [];
   const derivedOutputs = latestContent.length
     ? latestContent
     : steps?.filter((step: any) => step?.type === "function_call");
@@ -478,6 +486,8 @@ const normalizeInteraction = (json: any): Interaction => {
     createTime: json.created ?? json.createTime,
     updateTime: json.updated ?? json.updateTime,
     previousInteractionId: json.previous_interaction_id ?? json.previousInteractionId,
+    ...(json.continuation_token ? { continuationToken: json.continuation_token } : {}),
+    ...(json.usage?.initial_input_tokens !== undefined ? { initialInputTokens: json.usage.initial_input_tokens } : {}),
     environmentId: json.environment_id ?? json.environmentId,
     steps,
     outputs: Array.isArray(json.outputs) ? json.outputs : derivedOutputs,
@@ -1199,12 +1209,15 @@ const createGeminiRealtimeEventParser = (modelId?: string) => {
   };
 };
 
-const parseAssistantMessage = (candidate: any): ModelMessage => ({
+const parseAssistantMessage = (candidate: any, neon = false): ModelMessage => ({
   role: "assistant",
   parts:
-    candidate?.content?.parts?.map((part: any, index: number) => {
+    candidate?.content?.parts?.filter((part: any) => !neon || (!part.thought && part.text !== ""))?.map((part: any, index: number) => {
       if (part.text) {
-        return { type: "text", text: part.text } as const;
+        return { type: "text", text: part.text,
+          ...(neon && typeof part.thoughtSignature === "string"
+            ? { providerMetadata: { geminiThoughtSignature: part.thoughtSignature } } : {})
+        } as const;
       }
       if (part.functionCall) {
         return {
@@ -1542,7 +1555,7 @@ class GeminiContextCachesClient implements ContextCachesClient {
 
   async create(input: ContextCacheCreateInput): Promise<CachedContent> {
     const effectiveModel = input.providerOptions?.model ?? input.modelId;
-    if (typeof effectiveModel === "string" && ["gemini-4-carbon", "gemini-4-hydrogen"].includes(effectiveModel.replace(/^models\//, ""))) {
+    if (typeof effectiveModel === "string" && ["gemini-4-carbon", "gemini-4-hydrogen", GEMINI_4_NEON].includes(effectiveModel.replace(/^models\//, ""))) {
       throw new UnsupportedFeatureError(`Model "${effectiveModel}" supports implicit caching only.`);
     }
     const { signal, cleanup } = withTimeoutSignal(input);
@@ -1742,6 +1755,7 @@ class GeminiInteractionsClient implements InteractionsClient {
   }
 
   private body(input: InteractionCreateInput, stream = false) {
+    assertNeonInteraction(input);
     const tools = input.tools ? toToolSet(input.tools) : undefined;
     const body = {
       ...(input.modelId ? { model: input.modelId } : {}),
@@ -1758,7 +1772,8 @@ class GeminiInteractionsClient implements InteractionsClient {
       ...(input.background !== undefined ? { background: input.background } : {}),
       ...(input.store !== undefined ? { store: input.store } : {}),
       ...(stream ? { stream: true } : {}),
-      ...(input.providerOptions ?? {})
+      ...(input.providerOptions ?? {}),
+      ...(input.continuationToken !== undefined ? { continuation_token: input.continuationToken } : {})
     };
     if (input.providerOptions?.max_tool_calls !== undefined) throw new UnsupportedFeatureError("Gemini Interactions max_tool_calls is not verified as an effective hosted-tool limit.");
     assertCurrentGeminiInteractionBody(body);
@@ -1767,18 +1782,21 @@ class GeminiInteractionsClient implements InteractionsClient {
 
   async create(input: InteractionCreateInput) {
     const { signal, cleanup } = withTimeoutSignal(input);
-    try {
+    const send = async (segment: InteractionCreateInput) => {
+      const body = JSON.stringify(this.body(segment));
       const response = await withRetry(
-        () =>
-          this.fetcher(this.url("interactions"), {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            signal,
-            body: JSON.stringify(this.body(input))
-          }),
-        input
+        () => this.fetcher(this.url("interactions"), {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          signal,
+          body
+        }),
+        { ...input, abortSignal: signal }
       );
       return normalizeInteraction(await parseJson(response));
+    };
+    try {
+      return shouldContinueNeonInteraction(input) ? await createNeonInteraction(input, send, signal) : await send(input);
     } finally {
       cleanup();
     }
@@ -1846,7 +1864,7 @@ class GeminiInteractionsClient implements InteractionsClient {
       () =>
         resumeInput
           ? this.fetcher(
-              this.url(`interactions/${resumeInput.id}`, {
+              this.url(`interactions/${encodeGeminiPathSegment(resumeInput.id, "Gemini interaction ID")}`, {
                 stream: "true",
                 last_event_id: resumeInput.lastEventId
               }),
@@ -1865,8 +1883,8 @@ class GeminiInteractionsClient implements InteractionsClient {
               signal,
               body: JSON.stringify(this.body(input as InteractionCreateInput, true))
             }),
-      input
-    );
+      { ...input, abortSignal: signal }
+    ).catch((error) => { cleanup(); throw error; });
 
     return (async function* () {
       const functionCalls = new Map<
@@ -1876,6 +1894,8 @@ class GeminiInteractionsClient implements InteractionsClient {
       let finished = false;
       try {
         for await (const event of streamSSE(response)) {
+          signal.throwIfAborted();
+          if (event.data === "[DONE]") break;
           const json = JSON.parse(event.data);
           const eventType = json.event_type ?? json.type ?? event.event;
           if (eventType === "error") {
@@ -1973,20 +1993,23 @@ class GeminiInteractionsClient implements InteractionsClient {
           }
 
           const status = json.interaction?.status ?? json.status;
-          const terminalStatus = eventType === "interaction.completed" ? status ?? "completed" : status;
+          const terminalStatus = eventType === "interaction.completed" ? status ?? "completed"
+            : eventType === "interaction.requires_continuation" ? "requires_continuation" : status;
           const isStatusEvent = eventType === "interaction.status_update" || eventType === "interaction.requires_action";
           const isLegacyTerminalStatus = !eventType && [
             "requires_action",
+            "requires_continuation",
             "completed",
             "failed",
             "cancelled",
             "incomplete",
             "budget_exceeded"
           ].includes(status);
-          if (!finished && (eventType === "interaction.completed" || isStatusEvent || isLegacyTerminalStatus || json.done)) {
+          if (!finished && (eventType === "interaction.completed" || eventType === "interaction.requires_continuation" || isStatusEvent || isLegacyTerminalStatus || json.done)) {
+            if (terminalStatus === "requires_continuation" && eventType === "interaction.status_update") continue;
             const finishReason = terminalStatus === "requires_action"
               ? "tool-calls"
-              : terminalStatus === "incomplete" || terminalStatus === "budget_exceeded"
+              : terminalStatus === "incomplete" || terminalStatus === "budget_exceeded" || terminalStatus === "requires_continuation"
                 ? "length"
                 : terminalStatus === "failed" || terminalStatus === "cancelled"
                   ? "error"
@@ -2005,13 +2028,26 @@ class GeminiInteractionsClient implements InteractionsClient {
           }
         }
       } finally {
+        await response.body?.cancel().catch(() => {});
         cleanup();
       }
     })();
   }
 
   async stream(input: InteractionCreateInput): Promise<AsyncIterable<StreamEvent>> {
-    return this.requestInteractionStream(input);
+    if (!shouldContinueNeonInteraction(input)) return this.requestInteractionStream(input);
+    const { signal, cleanup } = withTimeoutSignal(input);
+    const send = (segment: InteractionCreateInput) => this.requestInteractionStream({
+      ...segment, timeoutMs: undefined, abortSignal: signal
+    });
+    const first = await send(input).catch((error) => { cleanup(); throw error; });
+    return (async function* () {
+      try {
+        yield* streamNeonInteraction(input, first, send, signal);
+      } finally {
+        cleanup();
+      }
+    })();
   }
 
   async resume(input: InteractionResumeInput): Promise<AsyncIterable<StreamEvent>> {
@@ -2161,36 +2197,43 @@ class GeminiLanguageModel implements LanguageModel<GeminiLanguageModelOptions> {
     return `${this.baseURL}/models/${encodeGeminiPathSegment(this.modelId, "Gemini model ID")}:${action}${separator}key=${this.apiKey}`;
   }
 
+  private request(input: ModelGenerateInput, action: string, signal: AbortSignal, continuationToken?: string) {
+    return withResponseRetry(
+      () => this.fetcher(this.url(action), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        signal,
+        body: JSON.stringify({
+          ...input.providerOptions,
+          store: generateContentStorage(input.providerOptions),
+          contents: this.modelId === GEMINI_4_NEON ? mapNeonContent(input.messages) : mapMessages(input.messages),
+          systemInstruction: systemInstruction(input.messages),
+          tools: mapTools(input.tools),
+          toolConfig: mapToolConfig(input.toolChoice, input.tools, input.messages),
+          generationConfig: generationConfig(this.modelId, input),
+          ...(continuationToken !== undefined ? { continuationToken } : {})
+        })
+      }),
+      { ...input, abortSignal: signal },
+      "Gemini"
+    );
+  }
+
   async generate(input: ModelGenerateInput): Promise<GenerateResult> {
     assertCurrentGeminiGenerateInput("gemini", this.modelId, input);
     const { signal, cleanup } = withTimeoutSignal(input);
 
     try {
-      const response = await withResponseRetry(
-        () =>
-          this.fetcher(this.url("generateContent"), {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            signal,
-            body: JSON.stringify({
-              ...input.providerOptions,
-              store: generateContentStorage(input.providerOptions),
-              contents: mapMessages(input.messages),
-              systemInstruction: systemInstruction(input.messages),
-              tools: mapTools(input.tools),
-              toolConfig: mapToolConfig(input.toolChoice, input.tools, input.messages),
-              generationConfig: generationConfig(this.modelId, input)
-            })
-          }),
-        { ...input, abortSignal: signal },
-        "Gemini"
-      );
-
-      const json = await parseJson(response);
+      const send = (token?: string) => this.request(input, "generateContent", signal, token).then(parseJson);
+      const neon = this.modelId === GEMINI_4_NEON;
+      const { json, segments } = neon ? await generateNeonContent(send, signal) : { json: await send(), segments: [] };
       const candidate = json.candidates?.[0];
-      const assistantMessage = parseAssistantMessage(candidate);
-      if (Object.values(input.tools ?? {}).some(t => isHostedToolDefinition(t) && ["googleSearch", "google_search"].includes(t.type)) || candidate?.groundingMetadata !== undefined) {
-        assistantMessage.parts.push({ type: "provider-data", provider: "gemini", data: createGeminiSearchUsage(this.modelId, globalThis.crypto.randomUUID())(json) });
+      const assistantMessage = parseAssistantMessage(candidate, this.modelId === GEMINI_4_NEON);
+      const searchEnabled = Object.values(input.tools ?? {}).some(t => isHostedToolDefinition(t) && ["googleSearch", "google_search"].includes(t.type));
+      for (const segment of neon ? segments : [json]) {
+        if (searchEnabled || segment.candidates?.[0]?.groundingMetadata !== undefined) {
+          assistantMessage.parts.push({ type: "provider-data", provider: "gemini", data: createGeminiSearchUsage(this.modelId, globalThis.crypto.randomUUID())(segment) });
+        }
       }
 
       return {
@@ -2202,6 +2245,7 @@ class GeminiLanguageModel implements LanguageModel<GeminiLanguageModelOptions> {
         finishReason: normalizeFinishReason(candidate?.finishReason),
         providerFinishReason: candidate?.finishReason,
         usage: normalizeGenerateContentUsage(json.usageMetadata ?? json.usage_metadata),
+        ...(segments.length > 1 ? { providerRequestCount: segments.length } : {}),
         rawResponse: json
       };
     } finally {
@@ -2212,42 +2256,49 @@ class GeminiLanguageModel implements LanguageModel<GeminiLanguageModelOptions> {
   async stream(input: ModelGenerateInput): Promise<AsyncIterable<StreamEvent>> {
     assertCurrentGeminiGenerateInput("gemini", this.modelId, input);
     const { signal, cleanup } = withTimeoutSignal(input);
-    const response = await withResponseRetry(
-      () =>
-        this.fetcher(this.url("streamGenerateContent?alt=sse"), {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          signal,
-          body: JSON.stringify({
-            ...input.providerOptions,
-            store: generateContentStorage(input.providerOptions),
-            contents: mapMessages(input.messages),
-            systemInstruction: systemInstruction(input.messages),
-            tools: mapTools(input.tools),
-            toolConfig: mapToolConfig(input.toolChoice, input.tools, input.messages),
-            generationConfig: generationConfig(this.modelId, input)
-          })
-        }),
-      { ...input, abortSignal: signal },
-      "Gemini"
-    ).catch((error) => { cleanup(); throw error; });
+    const send = (token?: string) => this.request(input, "streamGenerateContent?alt=sse", signal, token);
+    const response = await send().catch((error) => { cleanup(); throw error; });
+    const neon = this.modelId === GEMINI_4_NEON;
+    const chunks = neon
+      ? streamNeonContent(response, send, signal)
+      : (async function* () {
+          for await (const event of streamSSE(response)) yield JSON.parse(event.data);
+        })();
 
     const searchEnabled = Object.values(input.tools ?? {}).some(t => isHostedToolDefinition(t) && ["googleSearch", "google_search"].includes(t.type));
-    const meter = createGeminiSearchUsage(this.modelId, globalThis.crypto.randomUUID());
+    const modelId = this.modelId;
+    let meter = createGeminiSearchUsage(modelId, globalThis.crypto.randomUUID());
     return (async function* () {
       let previousUsage = "";
       const collectGrounding = createGroundingCollector();
       try {
         if (searchEnabled) { const data = meter(); previousUsage = JSON.stringify(data); yield { type: "provider-data", provider: "gemini", data } satisfies StreamEvent; }
-        for await (const event of streamSSE(response)) {
+        for await (const json of chunks) {
           signal.throwIfAborted();
-          const json = JSON.parse(event.data);
+          if (neon && json.neonContinuationToken) {
+            yield { type: "provider-data", provider: "gemini", data: {
+              type: "generate-content-continuation", continuationToken: json.neonContinuationToken
+            } } satisfies StreamEvent;
+            continue;
+          }
+          if (neon && json.neonSegmentEnd) {
+            const segment = json.neonSegmentEnd;
+            if (searchEnabled || segment.candidates?.[0]?.groundingMetadata !== undefined) {
+              yield { type: "provider-data", provider: "gemini", data: meter(segment) } satisfies StreamEvent;
+            }
+            meter = createGeminiSearchUsage(modelId, globalThis.crypto.randomUUID());
+            previousUsage = "";
+            continue;
+          }
           const candidate = json.candidates?.[0];
           const parts = candidate?.content?.parts ?? [];
 
           for (const [index, part] of parts.entries()) {
-            if (part.text) {
-              yield { type: "text-delta", textDelta: part.text } satisfies StreamEvent;
+            if (part.text && (!neon || !part.thought)) {
+              yield { type: "text-delta", textDelta: part.text,
+                ...(neon && typeof part.thoughtSignature === "string"
+                  ? { providerMetadata: { geminiThoughtSignature: part.thoughtSignature } } : {})
+              } satisfies StreamEvent;
             }
 
             if (part.functionCall) {
@@ -2280,7 +2331,8 @@ class GeminiLanguageModel implements LanguageModel<GeminiLanguageModelOptions> {
               type: "finish",
               finishReason: normalizeFinishReason(candidate.finishReason),
               providerFinishReason: candidate.finishReason,
-              usage: normalizeGenerateContentUsage(json.usageMetadata ?? json.usage_metadata)
+              usage: normalizeGenerateContentUsage(json.usageMetadata ?? json.usage_metadata),
+              ...(neon && json.segmentCount > 1 ? { providerRequestCount: json.segmentCount } : {})
             } satisfies StreamEvent;
           }
         }
@@ -2888,7 +2940,7 @@ class GeminiGroundedLanguageModel implements GroundedLanguageModel {
     const { signal, cleanup } = withTimeoutSignal(input);
 
     try {
-      const response = await withRetry(
+      const send = (continuationToken?: string) => withRetry(
         () =>
           this.fetcher(`${this.baseURL}/models/${encodeGeminiPathSegment(this.modelId, "Gemini model ID")}:generateContent?key=${this.apiKey}`, {
             method: "POST",
@@ -2897,9 +2949,10 @@ class GeminiGroundedLanguageModel implements GroundedLanguageModel {
             body: JSON.stringify({
               ...input.providerOptions,
               store: generateContentStorage(input.providerOptions),
-              contents: mapMessages(input.messages),
+              contents: this.modelId === GEMINI_4_NEON ? mapNeonContent(input.messages) : mapMessages(input.messages),
               systemInstruction: systemInstruction(input.messages),
               tools: [{ googleSearch: {} }],
+              ...(continuationToken !== undefined ? { continuationToken } : {}),
               generationConfig: generationConfig(this.modelId, {
                 messages: input.messages,
                 temperature: input.temperature,
@@ -2908,18 +2961,19 @@ class GeminiGroundedLanguageModel implements GroundedLanguageModel {
               } as ModelGenerateInput)
             })
           }),
-        input
-      );
+        { ...input, abortSignal: signal }
+      ).then(parseJson);
 
-      const json = await parseJson(response);
+      const { json, segments } = this.modelId === GEMINI_4_NEON
+        ? await generateNeonContent(send, signal) : { json: await send(), segments: [] };
       const candidate = json.candidates?.[0];
-      const assistantMessage = parseAssistantMessage(candidate);
+      const assistantMessage = parseAssistantMessage(candidate, this.modelId === GEMINI_4_NEON);
       return {
         text: assistantMessage.parts
           .filter((part) => part.type === "text")
           .map((part) => part.text)
           .join(""),
-        sources: extractGroundingSources(candidate),
+        sources: segments.length ? segments.flatMap((segment) => extractGroundingSources(segment.candidates?.[0])) : extractGroundingSources(candidate),
         finishReason: normalizeFinishReason(candidate?.finishReason),
         providerFinishReason: candidate?.finishReason,
         rawResponse: json

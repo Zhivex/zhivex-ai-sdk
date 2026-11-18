@@ -1385,6 +1385,7 @@ export const streamText = <
       const stream = await planned.model.stream(request);
       const stepMessages: ModelMessage[] = [];
       let textBuffer = "";
+      const annotatedText: Array<{ start: number; end: number; providerMetadata: Record<string, JsonValue> }> = [];
       const textRedactor = activeRedaction?.output
         ? createHeldTextRedactor(
           (text) => activeRedaction.policy.redactText(text),
@@ -1417,7 +1418,11 @@ export const streamText = <
         }
 
         if (event.type === "text-delta" && !textRedactor) {
+          const start = textBuffer.length;
           textBuffer += event.textDelta;
+          if (event.providerMetadata) {
+            annotatedText.push({ start, end: textBuffer.length, providerMetadata: event.providerMetadata });
+          }
         }
 
         if (event.type === "tool-call") {
@@ -1465,10 +1470,18 @@ export const streamText = <
 
       if (textBuffer) {
         const assistant = stepMessages.find((message) => message.role === "assistant");
+        const textParts: ModelMessage["parts"] = [];
+        let cursor = 0;
+        for (const { start, end, providerMetadata } of annotatedText) {
+          if (cursor < start) textParts.push({ type: "text", text: textBuffer.slice(cursor, start) });
+          textParts.push({ type: "text", text: textBuffer.slice(start, end), providerMetadata });
+          cursor = end;
+        }
+        if (cursor < textBuffer.length) textParts.push({ type: "text", text: textBuffer.slice(cursor) });
         if (assistant) {
-          assistant.parts.unshift({ type: "text", text: textBuffer });
+          assistant.parts.unshift(...textParts);
         } else {
-          stepMessages.unshift(createTextMessage("assistant", textBuffer));
+          stepMessages.unshift({ role: "assistant", parts: textParts });
         }
       }
 

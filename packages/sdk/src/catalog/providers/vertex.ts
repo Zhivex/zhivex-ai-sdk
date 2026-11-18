@@ -2,10 +2,11 @@ import { defineModelCatalogFragment } from "../fragment.js";
 
 export const vertexCatalogFragment = defineModelCatalogFragment({
   provider: "vertex",
-  revision: "2026-11-12",
+  revision: "2026-11-18",
   verifiedAt: "2026-10-20",
   pricingEffectiveAt: "2026-08-30",
   sources: [
+    "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/guides/gemini-4-neon",
     "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/guides/gemini-4-hydrogen",
     "https://cloud.google.com/model-garden/pricing",
     "https://platform.claude.com/docs/en/models/fable-5-2/whats-new-fable-5-2",
@@ -35,6 +36,18 @@ export const vertexCatalogFragment = defineModelCatalogFragment({
     "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/maas/deepseek/deepseek-v41-flash"
   ],
   entries: [
+    {
+      provider: "vertex", modelId: "gemini-4-neon",
+      inputCostPer1kTokens: 0.003, cachedInputCostPer1kTokens: 0.00015, outputCostPer1kTokens: 0.015,
+      contextWindowTokens: 1048576, contextWindowType: "combined", maxOutputTokens: 1048576,
+      pricingTerms: { source: "https://cloud.google.com/model-garden/pricing", verifiedAt: "2026-11-18", notes: "Standard global endpoint rates. Non-global: $3.30 input, $0.165 cached input, $16.50 output per million tokens." },
+      evidence: {
+        contextWindowTokens: { source: "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/guides/gemini-4-neon", sourceType: "primary", verifiedAt: "2026-11-18" },
+        contextWindowType: { source: "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/guides/gemini-4-neon", sourceType: "primary", verifiedAt: "2026-11-18" },
+        maxOutputTokens: { source: "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/guides/gemini-4-neon", sourceType: "primary", verifiedAt: "2026-11-18", conditions: ["Default and per-segment limit is 65,536 tokens. Long decodes share the 1,048,576-token limit with input."] }
+      },
+      recommendedFor: ["chat", "reasoning", "speed", "vision", "tools"]
+    },
     {
       provider: "vertex", modelId: "gemini-4-hydrogen",
       inputCostPer1kTokens: 0.0015, cachedInputCostPer1kTokens: 0.000075,

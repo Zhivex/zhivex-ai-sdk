@@ -1,3 +1,7 @@
+import {
+  assertNeonInteraction, createNeonInteraction, GEMINI_4_NEON, neonLocations, neonThinkingLevels,
+  shouldContinueNeonInteraction, streamNeonInteraction
+} from "@zhivex-ai/gemini/neon";
 import { toJSONSchema } from "zod";
 import {
   ConfigurationError, ProviderHTTPError, UnsupportedFeatureError,
@@ -37,6 +41,8 @@ const normalize = (json: any): Interaction => {
     id: json.id ?? json.name ?? "", name: json.name, model: json.model, agent: json.agent,
     status: json.status, object: json.object, createTime: json.created, updateTime: json.updated,
     previousInteractionId: json.previous_interaction_id, steps: json.steps, outputs,
+    ...(json.continuation_token ? { continuationToken: json.continuation_token } : {}),
+    ...(json.usage?.initial_input_tokens !== undefined ? { initialInputTokens: json.usage.initial_input_tokens } : {}),
     outputText: outputs.filter((value) => value.type === "text").map((value) => value.text ?? "").join("") || undefined,
     outputAudio: outputs.find((value) => value.type === "audio"),
     outputImage: outputs.find((value) => value.type === "image"),
@@ -103,30 +109,31 @@ export const createVertexInteractionsClient = (
     if (input.modelId && /^(lyria-3|gemini-omni)/.test(input.modelId) && !baseURL.endsWith("/locations/global")) {
       throw new ConfigurationError("Vertex Interactions media models require location global.");
     }
-    if (input.modelId === "gemini-4-hydrogen") {
+    assertNeonInteraction(input);
+    if (input.modelId === "gemini-4-hydrogen" || input.modelId === GEMINI_4_NEON) {
       const location = baseURL.match(/\/locations\/([^/]+)$/)?.[1];
-      if (location && !["global", "us", "eu"].includes(location)) {
-        throw new ConfigurationError("Vertex Gemini 4 Hydrogen requires location global, us, or eu.");
+      if (location && !neonLocations.some((supported) => supported === location)) {
+        throw new ConfigurationError(`Vertex model "${input.modelId}" requires location global, us, or eu.`);
       }
       if (input.providerOptions?.cachedContent !== undefined || input.providerOptions?.cached_content !== undefined) {
-        throw new UnsupportedFeatureError("Gemini 4 Hydrogen supports implicit caching only.");
+        throw new UnsupportedFeatureError(`Model "${input.modelId}" supports implicit caching only.`);
       }
       const config = input.generationConfig && typeof input.generationConfig === "object" && !Array.isArray(input.generationConfig) ? input.generationConfig : {};
       const effort = config.thinking_level ?? config.thinkingLevel;
-      if (effort !== undefined && !["low", "medium", "high", "xhigh"].includes(String(effort).toLowerCase())) {
-        throw new UnsupportedFeatureError("Gemini 4 Hydrogen supports thinking levels low, medium, high, and xhigh.");
+      if (effort !== undefined && !neonThinkingLevels.some((supported) => supported === String(effort).toLowerCase())) {
+        throw new UnsupportedFeatureError(`Model "${input.modelId}" supports thinking levels low, medium, high, and xhigh.`);
       }
       if (config.thinking_budget !== undefined || config.thinkingBudget !== undefined) {
-        throw new UnsupportedFeatureError("Gemini 4 Hydrogen requires thinking levels instead of budgets.");
+        throw new UnsupportedFeatureError(`Model "${input.modelId}" requires thinking levels instead of budgets.`);
       }
       for (const source of [input.providerOptions, config]) {
         if (source && ["temperature", "topP", "top_p", "topK", "top_k", "candidateCount", "candidate_count", "frequencyPenalty", "frequency_penalty", "presencePenalty", "presence_penalty"].some((key) => source[key] !== undefined)) {
-          throw new UnsupportedFeatureError("Gemini 4 Hydrogen uses provider-managed sampling.");
+          throw new UnsupportedFeatureError(`Model "${input.modelId}" uses provider-managed sampling.`);
         }
       }
       const last = Array.isArray(input.input) ? input.input.filter((part) => part && typeof part === "object" && Object.keys(part).length).at(-1) : undefined;
       if (last && typeof last === "object" && (last.type === "model_output" || last.role === "model")) {
-        throw new UnsupportedFeatureError("Gemini 4 Hydrogen does not support model-output prefill.");
+        throw new UnsupportedFeatureError(`Model "${input.modelId}" does not support model-output prefill.`);
       }
     }
     const tools = input.tools ? Object.values(toToolSet(input.tools) ?? {}).map((tool) => {
@@ -146,6 +153,7 @@ export const createVertexInteractionsClient = (
     }) : undefined;
     return { ...input.providerOptions, model: input.modelId, agent: input.agent, input: input.input,
       ...(tools ? { tools } : {}), previous_interaction_id: input.previousInteractionId,
+      ...(input.continuationToken !== undefined ? { continuation_token: input.continuationToken } : {}),
       system_instruction: input.systemInstruction, response_format: input.responseFormat,
       generation_config: input.generationConfig, agent_config: input.agentConfig,
       environment: input.environment, labels: input.labels, background: input.background,
@@ -165,7 +173,7 @@ export const createVertexInteractionsClient = (
     try { return await readJsonWithLimit(await request(url, init, signal, input), { maxBytes: 128 * 1024 * 1024 }); }
     finally { cleanup(); }
   };
-  const stream = async (input: InteractionCreateInput | VertexInteractionResumeInput): Promise<AsyncIterable<StreamEvent>> => {
+  const streamSegment = async (input: InteractionCreateInput | VertexInteractionResumeInput): Promise<AsyncIterable<StreamEvent>> => {
     const tools = toolAccumulator();
     if ("id" in input && input.previousEvents !== undefined) {
       let serialized: string;
@@ -211,10 +219,11 @@ export const createVertexInteractionsClient = (
             if (content.type === "text" && typeof content.text === "string") yield { type: "text-delta", textDelta: content.text } satisfies StreamEvent;
           }
           const status = data.interaction?.status ?? data.status ?? (typeof type === "string" && type.startsWith("interaction.") ? type.slice("interaction.".length) : undefined);
-          if (!finished && ["completed", "requires_action", "failed", "cancelled", "incomplete", "budget_exceeded"].includes(status)) {
+          if (!finished && ["completed", "requires_action", "requires_continuation", "failed", "cancelled", "incomplete", "budget_exceeded"].includes(status)) {
+            if (status === "requires_continuation" && type === "interaction.status_update") continue;
             if (tools.pending()) throw new ConfigurationError("Vertex interaction ended with incomplete tool calls.");
             finished = true;
-            yield { type: "finish", finishReason: status === "completed" ? "stop" : status === "requires_action" ? "tool-calls" : ["incomplete", "budget_exceeded"].includes(status) ? "length" : "error", providerFinishReason: status,
+            yield { type: "finish", finishReason: status === "completed" ? "stop" : status === "requires_action" ? "tool-calls" : ["incomplete", "budget_exceeded", "requires_continuation"].includes(status) ? "length" : "error", providerFinishReason: status,
               usage: normalize(data.interaction ?? data).usage } satisfies StreamEvent;
             break;
           }
@@ -227,7 +236,18 @@ export const createVertexInteractionsClient = (
     })();
   };
   return {
-    create: async (input) => normalize(await json(collection, { method: "POST", body: JSON.stringify(body(input, false)) }, input)),
+    async create(input) {
+      const send = async (segment: InteractionCreateInput) => normalize(await json(collection, {
+        method: "POST", body: JSON.stringify(body(segment, false))
+      }, segment));
+      if (!shouldContinueNeonInteraction(input)) return send(input);
+      const { signal, cleanup } = withTimeoutSignal(input);
+      try {
+        return await createNeonInteraction(input, (segment) => send({ ...segment, timeoutMs: undefined, abortSignal: signal }), signal);
+      } finally {
+        cleanup();
+      }
+    },
     get: async (input) => normalize(await json(resource(input.id), { method: "GET" }, input)),
     cancel: async (input) => normalize(await json(`${resource(input.id)}/cancel`, { method: "POST" }, input)),
     async delete(input) {
@@ -243,6 +263,19 @@ export const createVertexInteractionsClient = (
       const result: any = await json(url.toString(), { method: "GET" }, input);
       return { interactions: result.interaction_metadatas ?? [], nextPageToken: result.next_page_token, rawResponse: result };
     },
-    stream, resume: stream
+    async stream(input) {
+      if (!shouldContinueNeonInteraction(input)) return streamSegment(input);
+      const { signal, cleanup } = withTimeoutSignal(input);
+      const send = (segment: InteractionCreateInput) => streamSegment({ ...segment, timeoutMs: undefined, abortSignal: signal });
+      const first = await send(input).catch((error) => { cleanup(); throw error; });
+      return (async function* () {
+        try {
+          yield* streamNeonInteraction(input, first, send, signal);
+        } finally {
+          cleanup();
+        }
+      })();
+    },
+    resume: streamSegment
   };
 };

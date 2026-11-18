@@ -431,6 +431,30 @@ Contract source: [Google Decisions API](https://aistudio.google.com/docs/decisio
 checked November 11, 2026. Offline tests cover wire mapping, validation, errors,
 and cancellation; they do not certify live model quality or latency.
 
+### Gemini 4 Neon
+
+Use `provider("gemini-4-neon")` with `reasoning: { effort: "xhigh" }` in
+`generateText` or `streamText`. Other levels are `low`, `medium`, and `high`
+(the provider default). Neon manages sampling and caches matching prompt
+prefixes implicitly.
+
+Set `maxTokens` above 65,536 to allow multiple output segments. Input, reasoning,
+and output share a 1,048,576-token budget. The adapter follows continuation
+checkpoints, preserves the configured output budget, and adds up billed usage
+from all segments. Use the default `v1beta` endpoint for long decodes.
+
+For Interactions, set `generationConfig: { max_output_tokens: 120000, thinking_level: "xhigh" }`.
+Foreground `create` and `stream` follow continuations automatically. Use
+`automaticContinuation: false` to control the loop yourself, or `background: true`
+with `store: true` for a server-managed job. For stored manual continuations,
+pass `previousInteractionId` and `continuationToken` without `input`. For
+`store: false`, resend the original `input` with the token. Streaming exposes
+native checkpoint events in `provider-data` so callers can resume interrupted
+requests. A response that exhausts the requested output budget can be resumed
+with a larger budget.
+
+See the [official model documentation](https://aistudio.google.com/docs/models/gemini-4-neon).
+
 ### Gemini 4 Hydrogen
 
 Use `provider("gemini-4-hydrogen")` with `reasoning: { effort: "xhigh" }` in

@@ -2,6 +2,7 @@ import { toJSONSchema } from "zod";
 import {
   UnsupportedFeatureError, isCallableToolDefinition, isHostedToolDefinition } from "@zhivex-ai/core/provider";
 import type { JsonValue, ModelGenerateInput, ModelMessage } from "@zhivex-ai/core/contracts";
+import { mapNeonMessages } from "./neon.js";
 import { toBase64 } from "./encoding.js";
 
 const TOOL_INPUT_JSON_SCHEMA = Symbol.for("@zhivex-ai/core/json-schema");
@@ -86,6 +87,8 @@ export const mapMessages = (messages: ModelMessage[]) =>
       role: message.role === "assistant" ? "model" : "user",
       parts: message.parts.map(mapPart)
     }));
+
+export const mapNeonContent = (messages: ModelMessage[]) => mapNeonMessages(messages, mapPart);
 
 export const toGeminiSchema = (schema: unknown): JsonValue => {
   if (Array.isArray(schema)) {

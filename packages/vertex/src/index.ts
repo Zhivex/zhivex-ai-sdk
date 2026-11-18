@@ -1,3 +1,4 @@
+import { GEMINI_4_NEON, generateNeonContent, mapNeonMessages, neonLocations, neonThinkingLevels, NEON_SEGMENT_TOKENS, streamNeonContent, validateNeonOutputLimit } from "@zhivex-ai/gemini/neon";
 import { withManualRedirect } from "./manual-redirect.js";
 import { streamVertexGenerateContent, validateVertexGenerateContent } from "./generate-content-stream.js";
 import { normalizeVertexTranscriptionConfig, transcriptionRequest, transcriptionResponse, type VertexTranscriptionResult, type VertexTranscriptionModel as VertexTranscriptionModelContract } from "./transcription.js";
@@ -177,6 +178,8 @@ const encodeVertexResourceName = (value: string, label: string) => {
 };
 
 export interface VertexLanguageModelOptions {
+  /** Start from a Neon GenerateContent checkpoint, using the original messages. */
+  continuationToken?: string;
   topP?: number;
   topK?: number;
   stopSequences?: string[];
@@ -1193,6 +1196,7 @@ const createVertexRealtimeEventParser = (transcriptionOnly = false) => {
 const isGemini3ProModel = (modelId: string) => /^gemini-3([.-].*)?pro([.-]|$)/.test(modelId);
 
 const usesCurrentGeminiRequestRules = (modelId: string) =>
+  modelId === GEMINI_4_NEON ||
   modelId === "gemini-4-hydrogen" ||
   modelId === "gemini-4-argon" ||
   modelId === "gemini-3.8-flash" ||
@@ -1207,9 +1211,9 @@ const currentGeminiReasoningEfforts: NonNullable<ModelCapabilities["reasoningEff
   "high"
 ];
 
-const reasoningEffortsForModel = (modelId: string) =>
-  modelId === "gemini-4-hydrogen"
-    ? (["low", "medium", "high", "xhigh"] satisfies NonNullable<ModelCapabilities["reasoningEfforts"]>)
+const reasoningEffortsForModel = (modelId: string): Readonly<NonNullable<ModelCapabilities["reasoningEfforts"]>> =>
+  modelId === "gemini-4-hydrogen" || modelId === GEMINI_4_NEON
+    ? neonThinkingLevels
     : (modelId === "gemini-4-argon" || modelId === "gemini-3.8-flash" || modelId === "gemini-3.7-flash")
     ? (["low", "medium", "high"] satisfies NonNullable<ModelCapabilities["reasoningEfforts"]>)
     : currentGeminiReasoningEfforts;
@@ -1221,12 +1225,13 @@ const modelCapabilities = (
   usesCurrentGeminiRequestRules(modelId)
     ? {
         ...baseCapabilities,
-        computerUse: modelId === "gemini-4-hydrogen" || modelId === "gemini-4-argon" || modelId === "gemini-3.8-flash",
+        computerUse: modelId === GEMINI_4_NEON || modelId === "gemini-4-hydrogen" || modelId === "gemini-4-argon" || modelId === "gemini-3.8-flash",
         reasoningEfforts: [...reasoningEffortsForModel(modelId)],
+        ...(modelId === GEMINI_4_NEON ? { contextCaching: false, explicitPromptCaching: false, embeddings: false, interactions: true, parallelToolCalls: true } : {}),
         agentCapabilities: baseCapabilities.agentCapabilities
           ? {
               ...baseCapabilities.agentCapabilities,
-              computerUse: modelId === "gemini-4-hydrogen" || modelId === "gemini-4-argon" || modelId === "gemini-3.8-flash"
+              computerUse: modelId === GEMINI_4_NEON || modelId === "gemini-4-hydrogen" || modelId === "gemini-4-argon" || modelId === "gemini-3.8-flash"
             }
           : undefined
       }
@@ -1271,9 +1276,10 @@ const assertCurrentGeminiGenerateInput = (
   modelId: string,
   input: ModelGenerateInput
 ) => {
-  if (modelId === "gemini-4-hydrogen" &&
+  if (modelId === GEMINI_4_NEON) validateNeonOutputLimit(input.maxTokens);
+  if ((modelId === "gemini-4-hydrogen" || modelId === GEMINI_4_NEON) &&
       (input.providerOptions?.cachedContent !== undefined || input.providerOptions?.cached_content !== undefined)) {
-    throw new UnsupportedFeatureError("Gemini 4 Hydrogen supports implicit caching only.");
+    throw new UnsupportedFeatureError(`Model "${modelId}" supports implicit caching only.`);
   }
   if (!usesCurrentGeminiRequestRules(modelId)) {
     return;
@@ -1334,7 +1340,7 @@ const mapReasoning = (modelId: string, input: ModelGenerateInput) => {
       throw new UnsupportedFeatureError(`Provider "vertex" does not support "reasoning.effort=none" for ${family} models.`);
     }
 
-    if (input.reasoning.effort === "xhigh" && modelId !== "gemini-4-hydrogen") {
+    if (input.reasoning.effort === "xhigh" && modelId !== "gemini-4-hydrogen" && modelId !== GEMINI_4_NEON) {
       throw new UnsupportedFeatureError('Provider "vertex" does not support "reasoning.effort=xhigh".');
     }
 
@@ -1352,7 +1358,7 @@ const mapReasoning = (modelId: string, input: ModelGenerateInput) => {
 
     return input.reasoning.effort !== undefined
       ? {
-          thinkingLevel: input.reasoning.effort
+          thinkingLevel: modelId === GEMINI_4_NEON ? input.reasoning.effort.toUpperCase() : input.reasoning.effort
         }
       : undefined;
   }
@@ -1386,12 +1392,15 @@ const generationConfig = (modelId: string, input: ModelGenerateInput) => ({
     : {})
 });
 
-const parseAssistantMessage = (candidate: any): ModelMessage => ({
+const parseAssistantMessage = (candidate: any, neon = false): ModelMessage => ({
   role: "assistant",
   parts:
-    candidate?.content?.parts?.map((part: any, index: number) => {
+    candidate?.content?.parts?.filter((part: any) => !neon || (!part.thought && part.text !== ""))?.map((part: any, index: number) => {
       if (part.text) {
-        return { type: "text", text: part.text } as const;
+        return { type: "text", text: part.text,
+          ...(neon && typeof part.thoughtSignature === "string"
+            ? { providerMetadata: { geminiThoughtSignature: part.thoughtSignature } } : {})
+        } as const;
       }
       if (part.functionCall) {
         return {
@@ -1445,7 +1454,7 @@ class VertexContextCachesClient implements ContextCachesClient {
   async create(input: ContextCacheCreateInput): Promise<CachedContent> {
     const modelId = input.modelId.replace(/^publishers\/google\/models\//, "");
     this.assertModelLocation(modelId);
-    if (modelId === "gemini-4-hydrogen") throw new UnsupportedFeatureError("Gemini 4 Hydrogen supports implicit caching only.");
+    if (modelId === "gemini-4-hydrogen" || modelId === GEMINI_4_NEON) throw new UnsupportedFeatureError(`Model "${modelId}" supports implicit caching only.`);
     if (input.ttl !== undefined && input.expireTime !== undefined) {
       throw new ConfigurationError("Vertex context caches accept either ttl or expireTime, not both.");
     }
@@ -1816,6 +1825,13 @@ class VertexPredictionModel implements PredictionModel {
   }
 }
 
+const assertNeonLongDecodeEndpoint = (modelId: string, baseURL: string, maxTokens?: number, continuationToken?: unknown) => {
+  if (modelId === GEMINI_4_NEON && /^\/v1(?:\/|$)/.test(new URL(baseURL).pathname) &&
+      ((maxTokens ?? 0) > NEON_SEGMENT_TOKENS || continuationToken !== undefined)) {
+    throw new ConfigurationError("Vertex Gemini 4 Neon long decodes require API version v1beta1.");
+  }
+};
+
 class VertexLanguageModel implements LanguageModel<VertexLanguageModelOptions> {
   readonly provider = "vertex";
   readonly capabilities: ModelCapabilities;
@@ -1839,35 +1855,41 @@ class VertexLanguageModel implements LanguageModel<VertexLanguageModelOptions> {
     };
   }
 
+  private request(input: ModelGenerateInput<VertexLanguageModelOptions>, action: string, signal: AbortSignal, continuationToken?: string) {
+    assertNeonLongDecodeEndpoint(this.modelId, this.baseURL, input.maxTokens, continuationToken ?? input.providerOptions?.continuationToken);
+    return this.fetcher(this.url(action), {
+      method: "POST",
+      headers: this.headers(),
+      signal,
+      body: JSON.stringify({
+        ...input.providerOptions,
+        contents: this.modelId === GEMINI_4_NEON ? mapNeonMessages(input.messages, mapPart) : mapMessages(input.messages),
+        systemInstruction: systemInstruction(input.messages),
+        tools: mapTools(input.tools),
+        toolConfig: mapToolConfig(input.toolChoice, input.tools, input.messages),
+        generationConfig: generationConfig(this.modelId, input),
+        ...(continuationToken !== undefined ? { continuationToken } : {})
+      })
+    });
+  }
+
   async generate(input: ModelGenerateInput<VertexLanguageModelOptions>): Promise<GenerateResult> {
     assertCurrentGeminiGenerateInput("vertex", this.modelId, input);
     const { signal, cleanup } = withTimeoutSignal(input);
 
     try {
-      const json = await withRetry(
-        () =>
-          this.fetcher(this.url("generateContent"), {
-            method: "POST",
-            headers: this.headers(),
-            signal,
-            body: JSON.stringify({
-              ...input.providerOptions,
-              contents: mapMessages(input.messages),
-              systemInstruction: systemInstruction(input.messages),
-              tools: mapTools(input.tools),
-              toolConfig: mapToolConfig(input.toolChoice, input.tools, input.messages),
-              generationConfig: generationConfig(this.modelId, input)
-            })
-          }).then(parseJson),
+      const send = (token?: string) => withRetry(
+        () => this.request(input, "generateContent", signal, token).then(parseJson),
         { ...input, abortSignal: signal }
       );
-
+      const { json, segments } = this.modelId === GEMINI_4_NEON
+        ? await generateNeonContent(send, signal) : { json: await send(), segments: [] };
       const candidate = json.candidates?.[0];
       const usage = normalizeGenerateContentUsage(json.usageMetadata ?? json.usage_metadata);
       const validated = validateVertexGenerateContent(candidate, input.messages, usage, json.promptFeedback?.blockReason);
       // Replace only function-call parts; retain text, images and other existing message mapping.
       let nextCall = 0;
-      const assistantMessage = parseAssistantMessage(candidate);
+      const assistantMessage = parseAssistantMessage(candidate, this.modelId === GEMINI_4_NEON);
       assistantMessage.parts = assistantMessage.parts.map((part) => part.type === "tool-call"
         ? { type: "tool-call", toolCall: validated.calls[nextCall++]! }
         : part);
@@ -1881,6 +1903,7 @@ class VertexLanguageModel implements LanguageModel<VertexLanguageModelOptions> {
         finishReason: validated.finishReason,
         providerFinishReason: validated.providerFinishReason,
         usage,
+        ...(segments.length > 1 ? { providerRequestCount: segments.length } : {}),
         rawResponse: json
       };
     } finally {
@@ -1891,33 +1914,20 @@ class VertexLanguageModel implements LanguageModel<VertexLanguageModelOptions> {
   async stream(input: ModelGenerateInput<VertexLanguageModelOptions>): Promise<AsyncIterable<StreamEvent>> {
     assertCurrentGeminiGenerateInput("vertex", this.modelId, input);
     const { signal, cleanup } = withTimeoutSignal(input);
-    const response = await withRetry(
-      () =>
-        this.fetcher(this.url("streamGenerateContent?alt=sse"), {
-          method: "POST",
-          headers: this.headers(),
-          signal,
-          body: JSON.stringify({
-            ...input.providerOptions,
-            contents: mapMessages(input.messages),
-            systemInstruction: systemInstruction(input.messages),
-            tools: mapTools(input.tools),
-            toolConfig: mapToolConfig(input.toolChoice, input.tools, input.messages),
-            generationConfig: generationConfig(this.modelId, input)
-          })
-        }).then(async (response) => {
-          if (!response.ok) await parseJson(response);
-          return response;
-        }),
+    const send = (token?: string) => withRetry(
+      async () => {
+        const response = await this.request(input, "streamGenerateContent?alt=sse", signal, token);
+        if (!response.ok) await parseJson(response);
+        return response;
+      },
       { ...input, abortSignal: signal }
-    ).catch((error) => {
-      cleanup();
-      throw error;
-    });
+    );
+    const response = await send().catch((error) => { cleanup(); throw error; });
+    const chunks = this.modelId === GEMINI_4_NEON ? streamNeonContent(response, send, signal) : undefined;
 
     return (async function* () {
       try {
-        yield* streamVertexGenerateContent(response, input.messages, normalizeGenerateContentUsage, signal);
+        yield* streamVertexGenerateContent(response, input.messages, normalizeGenerateContentUsage, signal, chunks);
       } finally {
         cleanup();
       }
@@ -2537,10 +2547,11 @@ class VertexGroundedLanguageModel implements GroundedLanguageModel {
     providerOptions?: Record<string, unknown>;
   }): Promise<GroundedGenerateResult> {
     assertCurrentGeminiGenerateInput("vertex", this.modelId, input as ModelGenerateInput);
+    assertNeonLongDecodeEndpoint(this.modelId, this.baseURL, input.maxTokens, input.providerOptions?.continuationToken);
     const { signal, cleanup } = withTimeoutSignal(input);
 
     try {
-      const json = await withRetry(
+      const send = (continuationToken?: string) => withRetry(
         () =>
           this.fetcher(this.url(), {
             method: "POST",
@@ -2548,9 +2559,10 @@ class VertexGroundedLanguageModel implements GroundedLanguageModel {
             signal,
             body: JSON.stringify({
               ...input.providerOptions,
-              contents: mapMessages(input.messages),
+              contents: this.modelId === GEMINI_4_NEON ? mapNeonMessages(input.messages, mapPart) : mapMessages(input.messages),
               systemInstruction: systemInstruction(input.messages),
               tools: [{ googleSearch: {} }],
+              ...(continuationToken !== undefined ? { continuationToken } : {}),
               generationConfig: generationConfig(this.modelId, {
                 messages: input.messages,
                 temperature: input.temperature,
@@ -2562,14 +2574,16 @@ class VertexGroundedLanguageModel implements GroundedLanguageModel {
         { ...input, abortSignal: signal }
       );
 
+      const { json, segments } = this.modelId === GEMINI_4_NEON
+        ? await generateNeonContent(send, signal) : { json: await send(), segments: [] };
       const candidate = json.candidates?.[0];
-      const assistantMessage = parseAssistantMessage(candidate);
+      const assistantMessage = parseAssistantMessage(candidate, this.modelId === GEMINI_4_NEON);
       return {
         text: assistantMessage.parts
           .filter((part) => part.type === "text")
           .map((part) => part.text)
           .join(""),
-        sources: extractGroundingSources(candidate),
+        sources: segments.length ? segments.flatMap((segment) => extractGroundingSources(segment.candidates?.[0])) : extractGroundingSources(candidate),
         finishReason: normalizeFinishReason(candidate?.finishReason),
         providerFinishReason: candidate?.finishReason,
         usage: normalizeGenerateContentUsage(json.usageMetadata ?? json.usage_metadata),
@@ -2797,6 +2811,9 @@ export const createVertex = (
   const interactions = createVertexInteractionsClient(baseURL, fetcher, () => {
     if (auth.type !== "bearer" || !/\/projects\/[^/]+\/locations\/[^/]+$/.test(baseURL)) throw new ConfigurationError("Vertex Interactions requires Google Cloud bearer credentials and a project-scoped endpoint.");
   });
+  const languageBaseURL = (modelId: string) => modelId === GEMINI_4_NEON && !options.baseURL && options.apiVersion === undefined
+    ? baseURL.replace(/^(https:\/\/[^/]+)\/v1(?=\/|$)/, "$1/v1beta1")
+    : baseURL;
   const assertModelLocation = (modelId: string) => {
     if (modelId.replace(/^publishers\/google\/models\//, "").startsWith("virtual-try-on-")) throw new UnsupportedFeatureError("Virtual Try-On requires vertex.virtualTryOn.generate() with person and product images.");
     if (modelId.startsWith("claude-")) {
@@ -2808,7 +2825,7 @@ export const createVertex = (
     if (options.baseURL || auth.type !== "bearer") {
       return;
     }
-    const supportedLocations =
+    const supportedLocations: readonly string[] | undefined = modelId === GEMINI_4_NEON ? neonLocations :
       modelId === "gemini-3.7-flash" || modelId === "gemini-3.6-flash" || modelId === "gemini-3.5-transcribe-preview" || isVertexLiveTranscribeModel(modelId) || isGeminiLiveTranslateModel(modelId)
         ? ["global"]
         : modelId === "gemini-4-hydrogen" || modelId === "gemini-4-argon" || modelId === "gemini-3.8-flash" || modelId === "gemini-3.5-flash-lite"
@@ -2848,7 +2865,7 @@ export const createVertex = (
       return createVertexClaudeModel(modelId, `${baseURL}/publishers/anthropic/models/${encodedId}`, fetcher);
     }
     assertModelLocation(modelId);
-    return new VertexLanguageModel(modelId, baseURL, "", fetcher);
+    return new VertexLanguageModel(modelId, languageBaseURL(modelId), "", fetcher);
   };
   const groundedLanguageModel = (modelId: string) => {
     assertLanguageSurface(modelId);
@@ -2856,7 +2873,7 @@ export const createVertex = (
       throw new UnsupportedFeatureError("Claude on Vertex does not support Google grounded generation; use languageModel().");
     }
     assertModelLocation(modelId);
-    return new VertexGroundedLanguageModel(modelId, baseURL, "", fetcher);
+    return new VertexGroundedLanguageModel(modelId, languageBaseURL(modelId), "", fetcher);
   };
 
   return createProviderAdapter({
