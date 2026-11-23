@@ -2346,6 +2346,28 @@ describe("qwen adapter", () => {
     expect(fetchMock.mock.calls[4]?.[1]?.headers).toMatchObject({ "X-DashScope-Async": "enable" });
   });
 
+  it.each(["transcription", "speech"])("limits the error body on each Qwen %s retry", async (operation) => {
+    fetchMock.mockImplementation(async () => new Response("x".repeat(10_000), { status: 503 }));
+    const provider = createQwen({
+      apiKey: "test",
+      fetch: fetchMock as typeof fetch,
+      responseLimits: { errorBodyBytes: 32 }
+    });
+    const retries = { maxRetries: 1, retryBackoffMs: 0 };
+    const request = operation === "transcription"
+      ? provider.transcriptionModel!("qwen3-asr-flash").transcribe({
+          audio: { data: new Uint8Array([1]), mediaType: "audio/wav" },
+          ...retries
+        })
+      : provider.speechModel!("qwen3-tts-flash").generateSpeech({ input: "hello", ...retries });
+
+    await expect(request).rejects.toMatchObject({
+      status: 503,
+      responseBody: `${"x".repeat(32)}\n...[truncated at 32 bytes]`
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("rejects custom voice objects", async () => {
     const provider = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch });
     await expect(provider.speechModel!("qwen3-tts-flash").generateSpeech({

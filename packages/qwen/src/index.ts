@@ -2666,11 +2666,11 @@ class QwenTranscriptionModel implements TranscriptionModel {
             })
           }),
         { ...input, abortSignal: signal },
-        "Qwen"
+        "Qwen",
+        this.responseLimits.errorBodyBytes
       );
       const json = await parseJson(response, {
         maxBytes: this.responseLimits.transcriptionBytes,
-        errorBodyBytes: this.responseLimits.errorBodyBytes,
         endpoint: "chat/completions",
         abort
       });
@@ -2741,11 +2741,11 @@ class QwenSpeechModel implements SpeechModel {
             })
           }),
         isAudioGen ? { ...input, maxRetries: 0, abortSignal: signal } : { ...input, abortSignal: signal },
-        "Qwen"
+        "Qwen",
+        this.responseLimits.errorBodyBytes
       );
       const json = await parseJson(response, {
         maxBytes: this.responseLimits.speechJsonBytes,
-        errorBodyBytes: this.responseLimits.errorBodyBytes,
         endpoint: "multimodal-generation/generation",
         abort
       });
