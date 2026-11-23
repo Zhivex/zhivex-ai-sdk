@@ -52,7 +52,6 @@ import {
   streamSSE,
   streamChatCompletions,
   toolResultPayload,
-  withRetry,
   withResponseRetry,
   withTimeoutSignal,
   type AudioResponseLimits,
@@ -2616,8 +2615,8 @@ class OpenAILanguageModel implements LanguageModel<OpenAILanguageModelOptions> {
   }
 
   async generate(input: ModelGenerateInput): Promise<GenerateResult> {
-    const { signal, cleanup } = getRequestOptions(input);
     const options = resolveOpenAILanguageRequestOptions(input.providerOptions, this.apiKey);
+    const { signal, cleanup } = getRequestOptions(input);
 
     try {
       if (this.usesResponsesAPI(input, options)) {
@@ -2786,12 +2785,12 @@ class OpenAIGroundedLanguageModel implements GroundedLanguageModel {
     retryBackoffMs?: number;
     providerOptions?: Record<string, unknown>;
   }): Promise<GroundedGenerateResult> {
-    const { signal, cleanup } = withTimeoutSignal(input);
     const options = resolveOpenAILanguageRequestOptions(input.providerOptions, this.apiKey);
     const responseBodyOptions = openAIResponsesBodyOptions(options.bodyOptions, this.modelId);
+    const { signal, cleanup } = withTimeoutSignal(input);
 
     try {
-      const response = await withRetry(
+      const response = await withResponseRetry(
         () =>
           this.fetcher(`${this.baseURL}/responses`, {
             method: "POST",
@@ -2807,7 +2806,8 @@ class OpenAIGroundedLanguageModel implements GroundedLanguageModel {
               ...mapResponsesReasoning(input as ModelGenerateInput, responseBodyOptions.reasoning)
             })
           }),
-        input
+        { ...input, abortSignal: signal },
+        "OpenAI"
       );
 
       const json = await parseJson(response);

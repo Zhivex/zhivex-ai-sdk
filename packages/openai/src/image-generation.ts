@@ -725,7 +725,7 @@ export class OpenAIImageGenerationModel implements ImageGenerationModel<OpenAIIm
           endpoint: editing ? "images/edits" : "images/generations",
           abort
         });
-      }, input);
+      }, { ...input, abortSignal: signal });
 
       if (!Array.isArray(json.data)) {
         throw new ParseError("OpenAI image generation response did not contain an image data array.");

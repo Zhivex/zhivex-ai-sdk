@@ -250,7 +250,7 @@ export const createNodeDockerClient = (options: NodeDockerClientOptions = {}): D
         throw new SandboxError("PATH_INVALID", `Sandbox archive path ${containerPath} is not a single container path.`);
       }
       const archived = await this.exec(id, {
-        cmd: ["/bin/tar", "-c", "-C", parent, name],
+        cmd: ["/bin/tar", "-c", "-C", parent, "--", name],
         user: "",
         workingDir: "/",
         timeoutMs: 30_000,

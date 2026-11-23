@@ -2352,7 +2352,7 @@ class QwenMultimodalEmbeddingModelImpl implements QwenMultimodalEmbeddingModel {
   ): Promise<EmbedResult> {
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
-      const response = await withRetry(
+      const response = await withResponseRetry(
         () =>
           this.fetcher(
             `${this.taskBaseURL}/services/embeddings/multimodal-embedding/multimodal-embedding`,
@@ -2369,7 +2369,8 @@ class QwenMultimodalEmbeddingModelImpl implements QwenMultimodalEmbeddingModel {
               })
             }
           ),
-        input
+        { ...input, abortSignal: signal },
+        "Qwen"
       );
       const json = await parseJson(response);
       return {
@@ -2429,7 +2430,6 @@ class QwenFilesClient implements FilesClient {
   ) {}
 
   async upload(input: FileUploadInput): Promise<UploadedFile> {
-    const { signal, cleanup } = withTimeoutSignal(input);
     const form = new FormData();
     form.set("file", await createFile(input.data, input.mediaType, input.filename ?? input.displayName ?? input.name ?? "file"));
     form.set("purpose", String(input.providerOptions?.purpose ?? "file-extract"));
@@ -2438,8 +2438,9 @@ class QwenFilesClient implements FilesClient {
         form.set(key, typeof value === "string" ? value : JSON.stringify(value));
       }
     }
+    const { signal, cleanup } = withTimeoutSignal(input);
     try {
-      const response = await withRetry(
+      const response = await withResponseRetry(
         () =>
           this.fetcher(`${this.baseURL}/files`, {
             method: "POST",
@@ -2448,7 +2449,8 @@ class QwenFilesClient implements FilesClient {
             signal,
             body: form
           }),
-        input
+        { ...input, abortSignal: signal },
+        "Qwen"
       );
       return normalizeUploadedFile(await parseJson(response));
     } finally {
@@ -2460,7 +2462,11 @@ class QwenFilesClient implements FilesClient {
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
       const fileId = encodeQwenResourceId(input.name, "file");
-      const response = await withRetry(() => this.fetcher(`${this.baseURL}/files/${fileId}`, { method: "GET", headers: jsonHeaders(this.apiKey), signal }), input);
+      const response = await withResponseRetry(
+        () => this.fetcher(`${this.baseURL}/files/${fileId}`, { method: "GET", headers: jsonHeaders(this.apiKey), signal }),
+        { ...input, abortSignal: signal },
+        "Qwen"
+      );
       return normalizeUploadedFile(await parseJson(response));
     } finally {
       cleanup();
@@ -2470,9 +2476,10 @@ class QwenFilesClient implements FilesClient {
   async list(input: FileListInput = {}) {
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
-      const response = await withRetry(
+      const response = await withResponseRetry(
         () => this.fetcher(appendQuery(`${this.baseURL}/files`, { limit: input.pageSize, after: input.pageToken }), { method: "GET", headers: jsonHeaders(this.apiKey), signal }),
-        input
+        { ...input, abortSignal: signal },
+        "Qwen"
       );
       const json = await parseJson(response);
       return {
@@ -2489,7 +2496,11 @@ class QwenFilesClient implements FilesClient {
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
       const fileId = encodeQwenResourceId(input.name, "file");
-      const response = await withRetry(() => this.fetcher(`${this.baseURL}/files/${fileId}`, { method: "DELETE", headers: jsonHeaders(this.apiKey), signal }), input);
+      const response = await withResponseRetry(
+        () => this.fetcher(`${this.baseURL}/files/${fileId}`, { method: "DELETE", headers: jsonHeaders(this.apiKey), signal }),
+        { ...input, abortSignal: signal },
+        "Qwen"
+      );
       const json = await parseJson(response);
       return { name: input.name, rawResponse: json };
     } finally {
@@ -2511,7 +2522,7 @@ class QwenBatchesClient implements BatchesClient {
     }
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
-      const response = await withRetry(
+      const response = await withResponseRetry(
         () =>
           this.fetcher(`${this.baseURL}/batches`, {
             method: "POST",
@@ -2525,7 +2536,8 @@ class QwenBatchesClient implements BatchesClient {
               metadata: input.displayName ? { displayName: input.displayName } : undefined
             })
           }),
-        input
+        { ...input, abortSignal: signal },
+        "Qwen"
       );
       return normalizeBatchJob(await parseJson(response));
     } finally {
@@ -2537,7 +2549,11 @@ class QwenBatchesClient implements BatchesClient {
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
       const batchId = encodeQwenResourceId(input.name, "batch");
-      const response = await withRetry(() => this.fetcher(`${this.baseURL}/batches/${batchId}`, { method: "GET", headers: jsonHeaders(this.apiKey), signal }), input);
+      const response = await withResponseRetry(
+        () => this.fetcher(`${this.baseURL}/batches/${batchId}`, { method: "GET", headers: jsonHeaders(this.apiKey), signal }),
+        { ...input, abortSignal: signal },
+        "Qwen"
+      );
       return normalizeBatchJob(await parseJson(response));
     } finally {
       cleanup();
@@ -2547,9 +2563,10 @@ class QwenBatchesClient implements BatchesClient {
   async list(input: BatchListInput = {}) {
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
-      const response = await withRetry(
+      const response = await withResponseRetry(
         () => this.fetcher(appendQuery(`${this.baseURL}/batches`, { limit: input.pageSize, after: input.pageToken }), { method: "GET", headers: jsonHeaders(this.apiKey), signal }),
-        input
+        { ...input, abortSignal: signal },
+        "Qwen"
       );
       const json = await parseJson(response);
       return { batches: (json.data ?? json.batches ?? []).map(normalizeBatchJob), nextPageToken: json.next ?? json.nextPageToken, rawResponse: json };
@@ -2562,7 +2579,11 @@ class QwenBatchesClient implements BatchesClient {
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
       const batchId = encodeQwenResourceId(input.name, "batch");
-      const response = await withRetry(() => this.fetcher(`${this.baseURL}/batches/${batchId}/cancel`, { method: "POST", headers: jsonHeaders(this.apiKey), signal }), input);
+      const response = await withResponseRetry(
+        () => this.fetcher(`${this.baseURL}/batches/${batchId}/cancel`, { method: "POST", headers: jsonHeaders(this.apiKey), signal }),
+        { ...input, abortSignal: signal },
+        "Qwen"
+      );
       return normalizeBatchJob(await parseJson(response));
     } finally {
       cleanup();
@@ -2573,7 +2594,11 @@ class QwenBatchesClient implements BatchesClient {
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
       const batchId = encodeQwenResourceId(input.name, "batch");
-      const response = await withRetry(() => this.fetcher(`${this.baseURL}/batches/${batchId}`, { method: "DELETE", headers: jsonHeaders(this.apiKey), signal }), input);
+      const response = await withResponseRetry(
+        () => this.fetcher(`${this.baseURL}/batches/${batchId}`, { method: "DELETE", headers: jsonHeaders(this.apiKey), signal }),
+        { ...input, abortSignal: signal },
+        "Qwen"
+      );
       const json = await parseJson(response);
       return { name: input.name, rawResponse: json };
     } finally {
@@ -2611,7 +2636,7 @@ class QwenTranscriptionModel implements TranscriptionModel {
     delete providerOptions.messages;
     delete providerOptions.stream;
     try {
-      const response = await withRetry(
+      const response = await withResponseRetry(
         () =>
           this.fetcher(`${this.baseURL}/chat/completions`, {
             method: "POST",
@@ -2640,7 +2665,8 @@ class QwenTranscriptionModel implements TranscriptionModel {
               }
             })
           }),
-        input
+        { ...input, abortSignal: signal },
+        "Qwen"
       );
       const json = await parseJson(response, {
         maxBytes: this.responseLimits.transcriptionBytes,
@@ -2698,7 +2724,7 @@ class QwenSpeechModel implements SpeechModel {
     if (isAudioGen && (nestedInput.voice !== undefined || providerOptions.voice !== undefined || parameters !== undefined)) throw new ConfigurationError("Qwen TTS Next accepts generation fields inside input and no voice parameter.");
     const { signal, cleanup, abort } = withTimeoutSignal(input);
     try {
-      const response = await withRetry(
+      const response = await withResponseRetry(
         () =>
           this.fetcher(`${this.taskBaseURL}/${endpoint}`, {
             method: "POST",
@@ -2714,7 +2740,8 @@ class QwenSpeechModel implements SpeechModel {
               ...(parameters ? { parameters } : {})
             })
           }),
-        isAudioGen ? { ...input, maxRetries: 0 } : input
+        isAudioGen ? { ...input, maxRetries: 0, abortSignal: signal } : { ...input, abortSignal: signal },
+        "Qwen"
       );
       const json = await parseJson(response, {
         maxBytes: this.responseLimits.speechJsonBytes,
@@ -2759,22 +2786,24 @@ class QwenSpeechModel implements SpeechModel {
         throw new ProviderHTTPError("Qwen speech response did not contain audio data or a downloadable audio URL.", 502);
       }
       const audioResponse = await withRetry(
-        () =>
-          downloadQwenSpeechAudio(
+        async () => {
+          const downloaded = await downloadQwenSpeechAudio(
             audioURL,
             this.fetcher,
             signal,
             this.speechAudioURLValidator,
             this.speechAudioMaxRedirects
-          ),
-        input
+          );
+          if (!downloaded.ok) {
+            const body = await readErrorBodyWithLimit(downloaded, this.responseLimits.errorBodyBytes);
+            throw new ProviderHTTPError(`Qwen audio download failed with status ${downloaded.status}.`, downloaded.status, {
+              responseBody: body
+            });
+          }
+          return downloaded;
+        },
+        { ...input, abortSignal: signal }
       );
-      if (!audioResponse.ok) {
-        const body = await readErrorBodyWithLimit(audioResponse, this.responseLimits.errorBodyBytes);
-        throw new ProviderHTTPError(`Qwen audio download failed with status ${audioResponse.status}.`, audioResponse.status, {
-          responseBody: body
-        });
-      }
       return {
         audio: await readBodyWithLimit(audioResponse, {
           maxBytes: this.responseLimits.speechBytes,
@@ -2853,7 +2882,7 @@ class QwenImageGenerationModel implements ImageGenerationModel {
     }
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
-      const response = await withRetry(
+      const response = await withResponseRetry(
         () =>
           this.fetcher(endpoint, {
             method: "POST",
@@ -2876,7 +2905,8 @@ class QwenImageGenerationModel implements ImageGenerationModel {
               parameters
             })
           }),
-        { ...input, maxRetries: input.maxRetries ?? 0 }
+        { ...input, maxRetries: input.maxRetries ?? 0, abortSignal: signal },
+        "Qwen"
       );
       const json = await parseJson(response);
       if (json.code || json.output?.task_status === "FAILED") throw new ProviderHTTPError("Qwen media generation failed.", response.status, { responseBody: { code: json.code ?? json.output?.code } });
@@ -2960,7 +2990,7 @@ class QwenVideoGenerationModel implements VideoGenerationModel {
     }
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
-      const response = await withRetry(
+      const response = await withResponseRetry(
         () =>
           this.fetcher(`${this.taskBaseURL}/services/aigc/video-generation/video-synthesis`, {
             method: "POST",
@@ -2984,7 +3014,8 @@ class QwenVideoGenerationModel implements VideoGenerationModel {
               parameters
             })
           }),
-        { ...input, maxRetries: input.maxRetries ?? 0 }
+        { ...input, maxRetries: input.maxRetries ?? 0, abortSignal: signal },
+        "Qwen"
       );
       const json = await parseJson(response);
       if (json.code || json.output?.task_status === "FAILED") throw new ProviderHTTPError("Qwen media generation failed.", response.status, { responseBody: { code: json.code ?? json.output?.code } });
@@ -3018,7 +3049,6 @@ class QwenRerankModelImpl implements QwenRerankModel {
   ) {}
 
   async rerank(input: QwenRerankInput): Promise<QwenRerankResult> {
-    const { signal, cleanup } = withTimeoutSignal(input);
     const isTextRerank = /^qwen3-rerank(?:$|-)/i.test(this.modelId);
     if (
       isTextRerank &&
@@ -3033,8 +3063,9 @@ class QwenRerankModelImpl implements QwenRerankModel {
       }
       return toMultimodalEmbeddingContent(value);
     };
+    const { signal, cleanup } = withTimeoutSignal(input);
     try {
-      const response = await withRetry(
+      const response = await withResponseRetry(
         () =>
           this.fetcher(
             `${this.taskBaseURL}/services/rerank/text-rerank/text-rerank`,
@@ -3060,7 +3091,8 @@ class QwenRerankModelImpl implements QwenRerankModel {
               )
             }
           ),
-        input
+        { ...input, abortSignal: signal },
+        "Qwen"
       );
       const json = await parseJson(response);
       return {
@@ -3089,7 +3121,11 @@ class QwenTasksClientImpl implements QwenTasksClient {
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
       const taskId = encodeQwenResourceId(input.name, "task");
-      const response = await withRetry(() => this.fetcher(`${this.taskBaseURL}/tasks/${taskId}`, { method: "GET", headers: jsonHeaders(this.apiKey), signal }), input);
+      const response = await withResponseRetry(
+        () => this.fetcher(`${this.taskBaseURL}/tasks/${taskId}`, { method: "GET", headers: jsonHeaders(this.apiKey), signal }),
+        { ...input, abortSignal: signal },
+        "Qwen"
+      );
       return normalizeOperation(await parseJson(response));
     } finally {
       cleanup();
@@ -3100,7 +3136,11 @@ class QwenTasksClientImpl implements QwenTasksClient {
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
       const taskId = encodeQwenResourceId(input.name, "task");
-      const response = await withRetry(() => this.fetcher(`${this.taskBaseURL}/tasks/${taskId}/cancel`, { method: "POST", headers: jsonHeaders(this.apiKey), signal }), input);
+      const response = await withResponseRetry(
+        () => this.fetcher(`${this.taskBaseURL}/tasks/${taskId}/cancel`, { method: "POST", headers: jsonHeaders(this.apiKey), signal }),
+        { ...input, abortSignal: signal },
+        "Qwen"
+      );
       return normalizeOperation(await parseJson(response));
     } finally {
       cleanup();

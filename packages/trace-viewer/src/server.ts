@@ -34,20 +34,45 @@ export const resolveLoopbackHost = (host: string | undefined): string => {
 const formatUrl = (host: string, port: number): string =>
   `http://${host.includes(":") ? `[${host}]` : host}:${port}/`;
 
+const isAllowedLoopbackHostHeader = (hostHeader: string | undefined, boundPort: number): boolean => {
+  if (typeof hostHeader !== "string") return false;
+  const normalized = hostHeader.trim().toLowerCase();
+  if (!normalized) return false;
+  if (
+    normalized === `127.0.0.1:${boundPort}` ||
+    normalized === `localhost:${boundPort}` ||
+    normalized === `[::1]:${boundPort}`
+  ) {
+    return true;
+  }
+  return boundPort === 80 && (normalized === "127.0.0.1" || normalized === "localhost" || normalized === "[::1]");
+};
+
+const htmlHeaders = (byteLength: number) => ({
+  "content-type": "text/html; charset=utf-8",
+  "content-length": byteLength,
+  "cache-control": "no-store",
+  "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; img-src 'none'; connect-src 'none'; form-action 'none'; frame-ancestors 'none'",
+  "referrer-policy": "no-referrer",
+  "x-content-type-options": "nosniff"
+});
+
 const sendHtml = (response: ServerResponse, status: number, html: string) => {
   const body = Buffer.from(html);
-  response.writeHead(status, {
-    "content-type": "text/html; charset=utf-8",
-    "content-length": body.byteLength,
-    "cache-control": "no-store",
-    "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; img-src 'none'; connect-src 'none'; form-action 'none'; frame-ancestors 'none'",
-    "referrer-policy": "no-referrer",
-    "x-content-type-options": "nosniff"
-  });
+  response.writeHead(status, htmlHeaders(body.byteLength));
   response.end(body);
 };
 
-const route = (view: TraceView, request: IncomingMessage, response: ServerResponse) => {
+const route = (view: TraceView, boundPort: number, request: IncomingMessage, response: ServerResponse) => {
+  if (!isAllowedLoopbackHostHeader(request.headers.host, boundPort)) {
+    response.writeHead(403, {
+      "content-type": "text/plain; charset=utf-8",
+      "cache-control": "no-store",
+      "x-content-type-options": "nosniff"
+    });
+    response.end("Forbidden");
+    return;
+  }
   if (request.method !== "GET" && request.method !== "HEAD") {
     response.writeHead(405, { allow: "GET, HEAD" });
     response.end();
@@ -72,11 +97,7 @@ const route = (view: TraceView, request: IncomingMessage, response: ServerRespon
     html = renderMissingRun(view, url.pathname);
   }
   if (request.method === "HEAD") {
-    response.writeHead(status, {
-      "content-type": "text/html; charset=utf-8",
-      "cache-control": "no-store",
-      "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'"
-    });
+    response.writeHead(status, htmlHeaders(Buffer.byteLength(html)));
     response.end();
     return;
   }
@@ -91,9 +112,10 @@ export const startTraceViewer = async (options: StartTraceViewerOptions): Promis
     throw new Error(`Invalid port "${String(options.port)}".`);
   }
   const view = await loadTraceView(options);
+  let boundPort = port;
   const server = createServer((request, response) => {
     try {
-      route(view, request, response);
+      route(view, boundPort, request, response);
     } catch {
       sendHtml(response, 500, renderTraceList({ runs: [], warnings: [{ path: "server", message: "Failed to render the page." }] }));
     }
@@ -103,6 +125,10 @@ export const startTraceViewer = async (options: StartTraceViewerOptions): Promis
     server.once("error", onError);
     server.listen(port, host, () => {
       server.off("error", onError);
+      const listening = server.address();
+      if (listening && typeof listening !== "string") {
+        boundPort = listening.port;
+      }
       resolve();
     });
   });
@@ -118,6 +144,7 @@ export const startTraceViewer = async (options: StartTraceViewerOptions): Promis
     view,
     close: () => new Promise((resolve, reject) => {
       server.close((error) => error ? reject(error) : resolve());
+      server.closeAllConnections?.();
     })
   };
 };

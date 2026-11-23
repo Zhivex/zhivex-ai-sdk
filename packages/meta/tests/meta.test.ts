@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
-import { audioPart, ConfigurationError, generateObject, generateText, streamText, tool } from "@zhivex-ai/core";
+import { audioPart, ConfigurationError, generateObject, generateText, ParseError, ProviderHTTPError, streamText, tool } from "@zhivex-ai/core";
 import { runAgentProviderContractSuite } from "../../core/tests/agent-provider-contract.js";
 import { runLanguageModelContractSuite } from "../../core/tests/provider-contract.js";
 import { createMeta, metaFilePart, metaToolSearchTool, metaWebSearchTool } from "../src/index.js";
@@ -856,5 +856,40 @@ describe("meta adapter", () => {
       prompt: "hello",
       providerOptions: { apiMode: "responses" }
     }).collect()).rejects.toThrow("exceeded 128 tool calls");
+  });
+
+  it("fails on Responses mid-stream error events and truncated streams without a terminal event", async () => {
+    const provider = createMeta({ apiKey: "test", fetch: fetchMock as typeof fetch });
+
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        'data: {"type":"response.output_text.delta","delta":"hi"}\n\n' +
+          'data: {"type":"error","error":{"status":503,"message":"backend overloaded"}}\n\n',
+        { status: 200, headers: { "content-type": "text/event-stream" } }
+      )
+    );
+    await expect(
+      streamText({
+        model: provider("muse-spark-1.2"),
+        prompt: "hello",
+        providerOptions: { apiMode: "responses" },
+        maxRetries: 0
+      }).collect()
+    ).rejects.toBeInstanceOf(ProviderHTTPError);
+
+    fetchMock.mockResolvedValueOnce(
+      new Response('data: {"type":"response.output_text.delta","delta":"partial"}\n\ndata: [DONE]\n\n', {
+        status: 200,
+        headers: { "content-type": "text/event-stream" }
+      })
+    );
+    await expect(
+      streamText({
+        model: provider("muse-spark-1.2"),
+        prompt: "hello",
+        providerOptions: { apiMode: "responses" },
+        maxRetries: 0
+      }).collect()
+    ).rejects.toBeInstanceOf(ParseError);
   });
 });

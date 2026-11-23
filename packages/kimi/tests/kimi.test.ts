@@ -1203,4 +1203,33 @@ describe("kimi adapter", () => {
       })
     ).rejects.toThrow("traversal");
   });
+
+  it("retries retryable HTTP statuses on Kimi Formula endpoints", async () => {
+    fetchMock
+      .mockResolvedValueOnce(new Response("rate limited", { status: 429 }))
+      .mockResolvedValueOnce(
+        Response.json({
+          tools: [
+            {
+              type: "function",
+              function: {
+                name: "date",
+                description: "Get date",
+                parameters: { type: "object", properties: {} }
+              }
+            }
+          ]
+        })
+      );
+
+    const tools = await kimiFormulaTools({
+      apiKey: "test",
+      fetch: fetchMock as typeof fetch,
+      formulas: ["moonshot/date:latest"],
+      maxRetries: 1,
+      retryBackoffMs: 0
+    });
+    expect(Object.keys(tools)).toEqual(["date"]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
 });

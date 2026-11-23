@@ -3923,4 +3923,30 @@ describe("openai adapter", () => {
       provider.realtimeModel!("gpt-realtime").createBrowserToken?.({}, { timeoutMs: 1 })
     ).rejects.toBeInstanceOf(DOMException);
   });
+
+  it("retries retryable HTTP statuses on OpenAI embeddings and speech endpoints", async () => {
+    fetchMock
+      .mockResolvedValueOnce(new Response("rate limited", { status: 429 }))
+      .mockResolvedValueOnce(Response.json({ data: [{ embedding: [0.25, 0.75] }] }))
+      .mockResolvedValueOnce(new Response("unavailable", { status: 503 }))
+      .mockResolvedValueOnce(new Response(new Uint8Array([1, 2, 3]), { status: 200, headers: { "content-type": "audio/mpeg" } }));
+
+    const provider = createOpenAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const embedded = await embed({
+      model: provider.embeddingModel!("text-embedding-3-small"),
+      value: "hello",
+      maxRetries: 1,
+      retryBackoffMs: 0
+    });
+    expect(embedded.embeddings).toEqual([[0.25, 0.75]]);
+
+    const speech = await generateSpeech({
+      model: provider.speechModel!("gpt-4o-mini-tts"),
+      input: "hello",
+      maxRetries: 1,
+      retryBackoffMs: 0
+    });
+    expect(speech.audio).toEqual(new Uint8Array([1, 2, 3]));
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
 });

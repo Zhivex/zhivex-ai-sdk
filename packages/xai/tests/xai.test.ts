@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
-import { generateObject, generateText, streamText, tool } from "@zhivex-ai/core";
+import { generateObject, generateText, ProviderHTTPError, streamText, tool } from "@zhivex-ai/core";
 import { runAgentProviderContractSuite } from "../../core/tests/agent-provider-contract.js";
 import { runLanguageModelContractSuite } from "../../core/tests/provider-contract.js";
 import {
@@ -574,5 +574,33 @@ describe("xai adapter", () => {
   it("creates equivalent language models from the callable provider", () => {
     const xai = createXAI({ apiKey: "test", fetch: fetchMock as typeof fetch });
     expect(xai("grok-4.5")).toMatchObject(xai.languageModel("grok-4.5"));
+  });
+
+  it("rejects credentialed redirects on xAI file endpoints", async () => {
+    fetchMock.mockImplementation(async () => new Response(null, { status: 302, headers: { location: "https://evil.example" } }));
+    const xai = createXAI({ apiKey: "secret", fetch: fetchMock as typeof fetch });
+    await expect(xai.files.get({ name: "file_1" })).rejects.toBeInstanceOf(ProviderHTTPError);
+    await expect(xai.files.list()).rejects.toBeInstanceOf(ProviderHTTPError);
+    await expect(xai.files.delete({ name: "file_1" })).rejects.toBeInstanceOf(ProviderHTTPError);
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ redirect: "manual" });
+  });
+
+  it("retries retryable HTTP statuses on xAI files and media endpoints", async () => {
+    fetchMock
+      .mockResolvedValueOnce(new Response("rate limited", { status: 429 }))
+      .mockResolvedValueOnce(Response.json({ id: "file_1", filename: "doc.txt" }))
+      .mockResolvedValueOnce(new Response("unavailable", { status: 503 }))
+      .mockResolvedValueOnce(Response.json({ data: [{ url: "https://example.test/out.jpg" }] }));
+
+    const xai = createXAI({ apiKey: "secret", fetch: fetchMock as typeof fetch });
+    const file = await xai.files.get({ name: "file_1", maxRetries: 1, retryBackoffMs: 0 });
+    expect(file.name).toBe("file_1");
+    const generated = await xai.imageGenerationModel("grok-imagine-image").generateImage({
+      prompt: "sky",
+      maxRetries: 1,
+      retryBackoffMs: 0
+    });
+    expect(generated.images[0]?.uri).toBe("https://example.test/out.jpg");
+    expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 });

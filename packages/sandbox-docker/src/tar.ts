@@ -202,6 +202,9 @@ export const unpackTar = (bytes: Uint8Array): TarEntry[] => {
     }
     const typeFlag = String.fromCharCode(header[156] ?? 0);
     const size = readOctal(header, 124, 12);
+    if (offset + size > bytes.length) {
+      throw new SandboxError("TAR_INVALID", "Tar entry payload is truncated.");
+    }
     const content = bytes.subarray(offset, offset + size);
     offset += Math.ceil(size / BLOCK) * BLOCK;
     if (typeFlag === "x" || typeFlag === "g") {
@@ -214,6 +217,9 @@ export const unpackTar = (bytes: Uint8Array): TarEntry[] => {
         extendedPath = extended;
       }
       continue;
+    }
+    if (typeFlag !== "0" && typeFlag !== "\0" && typeFlag !== "5" && typeFlag !== "2") {
+      throw new SandboxError("TAR_INVALID", `Unsupported tar entry type "${typeFlag}".`);
     }
     const name = readText(header, 0, 100);
     const prefix = readText(header, 345, 155);

@@ -19,8 +19,8 @@ import {
   readJsonWithLimit,
   serializeJsonValue,
   openOpenAICompatibleEvents,
+  withManualRedirect,
   withOpenAICompatibleAttempt,
-  withRetry,
   withResponseRetry,
   withTimeoutSignal,
   type CallableProviderAdapter,
@@ -448,12 +448,14 @@ const parseJsonLines = async function* (response: Response): AsyncGenerator<any>
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  let completed = false;
 
   try {
     while (true) {
       const { value, done } = await reader.read();
 
       if (done) {
+        completed = true;
         break;
       }
 
@@ -496,6 +498,9 @@ const parseJsonLines = async function* (response: Response): AsyncGenerator<any>
     }
     throw error;
   } finally {
+    if (!completed) {
+      await reader.cancel("Ollama streaming response ended before EOF.").catch(() => {});
+    }
     reader.releaseLock();
   }
 };
@@ -685,16 +690,16 @@ class OllamaEmbeddingModel implements EmbeddingModel {
   }
 
   async embed(input: EmbedInput & { abortSignal?: AbortSignal; timeoutMs?: number; maxRetries?: number; retryBackoffMs?: number }): Promise<EmbedResult> {
-    const { signal, cleanup } = withTimeoutSignal(input);
     const values = input.values.map((value) => {
       if (typeof value !== "string") {
         throw new UnsupportedFeatureError('Provider "ollama" does not support multimodal embedding values.');
       }
       return value;
     });
+    const { signal, cleanup } = withTimeoutSignal(input);
 
     try {
-      const response = await withRetry(
+      const response = await withResponseRetry(
         () =>
           this.fetcher(apiEndpoint(this.baseURL, "embed"), {
             method: "POST",
@@ -705,7 +710,8 @@ class OllamaEmbeddingModel implements EmbeddingModel {
               input: values
             })
           }),
-        input
+        { ...input, abortSignal: signal },
+        "Ollama"
       );
 
       const json = await parseJson(response);
@@ -754,7 +760,11 @@ export const createOllama = (
       ? process.env.OLLAMA_API_KEY?.trim() || undefined
       : undefined;
   const apiKey = options.apiKey?.trim() ?? cloudEnvironmentKey;
-  const fetcher = options.fetch ?? globalThis.fetch;
+  const rawFetcher = options.fetch ?? globalThis.fetch;
+  const fetcher =
+    apiKey !== undefined || configuredHeaders.has("authorization")
+      ? withManualRedirect(rawFetcher)
+      : rawFetcher;
 
   return createProviderAdapter({
     name: "ollama",

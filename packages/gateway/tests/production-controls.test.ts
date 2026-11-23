@@ -211,3 +211,33 @@ it.each(["generateObject", "streamObject", "runAgent", "streamAgent"] as const)(
     : gateway.streamAgent({ primary: target, prompt: "hello" }).collect();
   await expect(result).rejects.toBeInstanceOf(GatewayDeadlineError);
 });
+it("isolates budget settlement failures by scope and allows cooldown recovery", async () => {
+  let failScope = true;
+  const model = fixture();
+  model.generate = vi.fn(model.generate);
+  const store = {
+    async reserve(input: { scope: string }) {
+      return {
+        settle() {
+          if (input.scope === "tenant-a" && failScope) {
+            throw new Error("backend down");
+          }
+        },
+        cancel() {}
+      };
+    }
+  };
+  const gateway = createGateway({
+    adapters: adapter(model),
+    modelCatalog: catalog,
+    budget: { store, currency: "USD", reserveAmount: .5, settlementFailureCooldownMs: 25 }
+  });
+  expect((await gateway.generate({ ...request, budgetScope: "tenant-a" })).text).toBe("done");
+  expect(gateway.diagnostics().settlementFailures).toBe(1);
+  await expect(gateway.generate({ ...request, budgetScope: "tenant-a" })).rejects.toThrow("budget");
+  expect((await gateway.generate({ ...request, budgetScope: "tenant-b" })).text).toBe("done");
+  failScope = false;
+  await pause(35);
+  expect((await gateway.generate({ ...request, budgetScope: "tenant-a" })).text).toBe("done");
+  expect(model.generate).toHaveBeenCalledTimes(3);
+});

@@ -1,5 +1,6 @@
 import { promises as fs } from "node:fs";
 import { open, mkdtemp, mkdir, stat, symlink, writeFile } from "node:fs/promises";
+import { request as httpRequest } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -316,6 +317,49 @@ describe("local server", () => {
       expect(missing.status).toBe(404);
       const head = await fetch(viewer.url, { method: "HEAD" });
       expect(head.status).toBe(200);
+      expect(head.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
+      expect(head.headers.get("referrer-policy")).toBe("no-referrer");
+      expect(head.headers.get("x-content-type-options")).toBe("nosniff");
+      expect(Number(head.headers.get("content-length"))).toBeGreaterThan(0);
+
+      const hostChecks = await Promise.all([
+        new Promise<number>((resolve, reject) => {
+          const req = httpRequest(
+            { hostname: "127.0.0.1", port: viewer.port, path: "/", headers: { host: `attacker.com:${viewer.port}` } },
+            (res) => { res.resume(); resolve(res.statusCode ?? 0); }
+          );
+          req.on("error", reject);
+          req.end();
+        }),
+        new Promise<number>((resolve, reject) => {
+          const req = httpRequest(
+            { hostname: "127.0.0.1", port: viewer.port, path: "/", headers: { host: `localhost:${viewer.port}` } },
+            (res) => { res.resume(); resolve(res.statusCode ?? 0); }
+          );
+          req.on("error", reject);
+          req.end();
+        })
+      ]);
+      expect(hostChecks).toEqual([403, 200]);
+
+      // Verify close() resolves promptly even with an open keep-alive connection.
+      const keepAliveRes = await new Promise<void>((resolve, reject) => {
+        const req = httpRequest(
+          {
+            hostname: "127.0.0.1",
+            port: viewer.port,
+            path: "/",
+            headers: { connection: "keep-alive" }
+          },
+          (res) => {
+            res.resume();
+            res.on("end", () => resolve());
+          }
+        );
+        req.on("error", reject);
+        req.end();
+      });
+      expect(keepAliveRes).toBeUndefined();
     } finally {
       await viewer.close();
     }

@@ -4,6 +4,7 @@ import {
   readBodyWithLimit,
   readErrorBodyWithLimit,
   resolveAudioResponseLimits,
+  withResponseRetry,
   withRetry,
   withTimeoutSignal,
   type AudioInput,
@@ -53,16 +54,16 @@ export class OpenAIEmbeddingModel implements EmbeddingModel {
     if (isOpenAIGpt6CyberModel(this.modelId)) {
       throw new UnsupportedFeatureError(`Provider "openai" model "${this.modelId}" does not support embeddings.`);
     }
-    const { signal, cleanup } = withTimeoutSignal(input);
     const values = input.values.map((value) => {
       if (typeof value !== "string") {
         throw new UnsupportedFeatureError('Provider "openai" does not support multimodal embedding values.');
       }
       return value;
     });
+    const { signal, cleanup } = withTimeoutSignal(input);
 
     try {
-      const response = await withRetry(
+      const response = await withResponseRetry(
         () =>
           this.fetcher(`${this.baseURL}/embeddings`, {
             method: "POST",
@@ -73,7 +74,8 @@ export class OpenAIEmbeddingModel implements EmbeddingModel {
               input: values
             })
           }),
-        input
+        { ...input, abortSignal: signal },
+        "OpenAI"
       );
 
       const json = await parseJson(response);
@@ -113,7 +115,6 @@ export class OpenAITranscriptionModel implements TranscriptionModel {
     retryBackoffMs?: number;
     providerOptions?: Record<string, unknown>;
   }): Promise<TranscriptionResult> {
-    const { signal, cleanup, abort } = withTimeoutSignal(input);
     const form = new FormData();
     for (const [key, value] of Object.entries(input.providerOptions ?? {})) {
       if (["model", "file", "prompt", "language"].includes(key)) {
@@ -129,18 +130,27 @@ export class OpenAITranscriptionModel implements TranscriptionModel {
     if (input.language) {
       form.set("language", input.language);
     }
+    const { signal, cleanup, abort } = withTimeoutSignal(input);
 
     try {
       const response = await withRetry(
-        () =>
-          this.fetcher(`${this.baseURL}/audio/transcriptions`, {
+        async () => {
+          const result = await this.fetcher(`${this.baseURL}/audio/transcriptions`, {
             method: "POST",
             redirect: "error",
             headers: { authorization: `Bearer ${this.apiKey}` },
             signal,
             body: form
-          }),
-        input
+          });
+          if (!result.ok) {
+            const body = await readErrorBodyWithLimit(result, this.responseLimits.errorBodyBytes);
+            throw new ProviderHTTPError(`OpenAI request failed with status ${result.status}.`, result.status, {
+              responseBody: body
+            });
+          }
+          return result;
+        },
+        { ...input, abortSignal: signal }
       );
 
       const json = await parseJson(response, {
@@ -184,8 +194,8 @@ export class OpenAISpeechModel implements SpeechModel {
 
     try {
       const response = await withRetry(
-        () =>
-          this.fetcher(`${this.baseURL}/audio/speech`, {
+        async () => {
+          const result = await this.fetcher(`${this.baseURL}/audio/speech`, {
             method: "POST",
             headers: jsonHeaders(this.apiKey),
             signal,
@@ -195,16 +205,17 @@ export class OpenAISpeechModel implements SpeechModel {
               input: input.input,
               voice: openAIWireVoice(input.voice, "alloy")
             })
-          }),
-        input
+          });
+          if (!result.ok) {
+            const body = await readErrorBodyWithLimit(result, this.responseLimits.errorBodyBytes);
+            throw new ProviderHTTPError(`OpenAI request failed with status ${result.status}.`, result.status, {
+              responseBody: body
+            });
+          }
+          return result;
+        },
+        { ...input, abortSignal: signal }
       );
-
-      if (!response.ok) {
-        const body = await readErrorBodyWithLimit(response, this.responseLimits.errorBodyBytes);
-        throw new ProviderHTTPError(`OpenAI request failed with status ${response.status}.`, response.status, {
-          responseBody: body
-        });
-      }
 
       return {
         audio: await readBodyWithLimit(response, {

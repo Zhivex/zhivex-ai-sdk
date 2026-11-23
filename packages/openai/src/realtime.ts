@@ -11,7 +11,7 @@ import {
   openWebSocketConnection,
   toToolSet,
   toolResultPayload,
-  withRetry,
+  withResponseRetry,
   withTimeoutSignal,
   type JsonValue,
   type ModelCapabilities,
@@ -704,7 +704,7 @@ export class OpenAIRealtimeModel implements RealtimeModel {
       timeoutMs: options?.timeoutMs
     });
     try {
-      const response = await withRetry(
+      const response = await withResponseRetry(
         () =>
           this.fetcher(this.browserTokenURL ?? `${this.baseURL}/realtime/client_secrets`, {
             method: "POST",
@@ -721,7 +721,9 @@ export class OpenAIRealtimeModel implements RealtimeModel {
               )
             }),
             signal
-          })
+          }),
+        { abortSignal: signal },
+        "OpenAI"
       );
       const payload = await parseJson(response);
     const secret = payload.client_secret;

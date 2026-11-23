@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
-import { generateObject, generateText, getAgentCapabilities, providerDataPart, streamText, tool } from "@zhivex-ai/core";
+import { generateObject, generateText, getAgentCapabilities, ParseError, providerDataPart, ProviderHTTPError, streamText, tool } from "@zhivex-ai/core";
 import { runAgentProviderContractSuite } from "../../core/tests/agent-provider-contract.js";
 import { runLanguageModelContractSuite } from "../../core/tests/provider-contract.js";
 import { anthropicCodeExecutionTool, anthropicMcpToolset, anthropicWebSearchTool, createAnthropic } from "../src/index.js";
@@ -2058,5 +2058,40 @@ describe("anthropic adapter", () => {
         }
       })
     ).rejects.toThrow(/only supports default sampling controls/);
+  });
+
+  it("fails on mid-stream SSE errors, truncated streams, and malformed JSON", async () => {
+    const provider = createAnthropic({ apiKey: "test", fetch: fetchMock as typeof fetch });
+
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        'event: content_block_delta\ndata: {"index":0,"delta":{"type":"text_delta","text":"hi"}}\n\n' +
+          'event: error\ndata: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}\n\n',
+        { status: 200, headers: { "content-type": "text/event-stream" } }
+      )
+    );
+    await expect(
+      streamText({ model: provider("claude-opus-4-8"), prompt: "hello", maxRetries: 0 }).collect()
+    ).rejects.toBeInstanceOf(ProviderHTTPError);
+
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        'event: content_block_delta\ndata: {"index":0,"delta":{"type":"text_delta","text":"partial"}}\n\n',
+        { status: 200, headers: { "content-type": "text/event-stream" } }
+      )
+    );
+    await expect(
+      streamText({ model: provider("claude-opus-4-8"), prompt: "hello", maxRetries: 0 }).collect()
+    ).rejects.toBeInstanceOf(ParseError);
+
+    fetchMock.mockResolvedValueOnce(
+      new Response("event: message_start\ndata: {bad-json\n\n", {
+        status: 200,
+        headers: { "content-type": "text/event-stream" }
+      })
+    );
+    await expect(
+      streamText({ model: provider("claude-opus-4-8"), prompt: "hello", maxRetries: 0 }).collect()
+    ).rejects.toBeInstanceOf(ParseError);
   });
 });

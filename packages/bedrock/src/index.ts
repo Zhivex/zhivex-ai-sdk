@@ -1229,7 +1229,7 @@ class BedrockLanguageModel implements LanguageModel<BedrockLanguageModelOptions>
         } catch (error) {
           throw normalizeBedrockError(error);
         }
-      }, input);
+      }, { ...input, abortSignal: signal });
     } catch (error) {
       cleanup();
       throw error;
@@ -1615,12 +1615,14 @@ class BedrockAgentCoreMcpClient implements McpClient {
       this.sessionId = returnedSessionId;
     }
 
-    const json = await parseMcpHttpResponse(response);
     if (!response.ok) {
+      const responseBody = await readErrorBodyWithLimit(response);
       throw new ProviderHTTPError(`Bedrock AgentCore MCP request failed with status ${response.status}.`, response.status, {
-        responseBody: JSON.stringify(json)
+        responseBody
       });
     }
+
+    const json = await parseMcpHttpResponse(response);
 
     return requireJsonRpcResult<T>(json, method);
   }

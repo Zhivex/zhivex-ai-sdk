@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-import { readFileSync } from "node:fs";
-import { pathToFileURL } from "node:url";
+import { readFileSync, realpathSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
   resolveLoopbackHost,
@@ -141,7 +142,17 @@ export const runTraceViewerCli = async (
   }
 };
 
-const invokedDirectly = process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
+const resolveRealPath = (filePath: string): string => {
+  try {
+    return realpathSync(filePath);
+  } catch {
+    return path.resolve(filePath);
+  }
+};
+
+const invokedDirectly =
+  process.argv[1] !== undefined &&
+  resolveRealPath(fileURLToPath(import.meta.url)) === resolveRealPath(process.argv[1]);
 
 if (invokedDirectly) {
   runTraceViewerCli(process.argv.slice(2), readTraceViewerPackageVersion()).then((code) => {

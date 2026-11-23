@@ -47,7 +47,6 @@ import {
   toToolSet,
   toolResultPayload,
   unsupportedBrowserToken,
-  withRetry,
   withResponseRetry,
   withTimeoutSignal,
   type AudioInput,
@@ -551,13 +550,14 @@ const pollGeminiOperation = async (
       throw new Error(`Gemini operation "${operation.name}" timed out after ${timeoutMs}ms.`);
     }
     await sleep(options.pollIntervalMs ?? 5_000, options.abortSignal);
-    const response = await withRetry(
+    const response = await withResponseRetry(
       () =>
         fetcher(`${baseURL}/${encodeGeminiResourceName(current.name, "Gemini operation name")}?key=${apiKey}`, {
           method: "GET",
           signal: options.abortSignal
         }),
-      options
+      options,
+      "Gemini"
     );
     current = normalizeOperation(await parseJson(response));
   }
@@ -1270,7 +1270,7 @@ class GeminiFilesClient implements FilesClient {
 
     try {
       const uploaded = await uploadBody(input.data);
-      const startResponse = await withRetry(
+      const startResponse = await withResponseRetry(
         () =>
           this.fetcher(this.uploadUrl("files"), {
             method: "POST",
@@ -1291,12 +1291,11 @@ class GeminiFilesClient implements FilesClient {
               }
             })
           }),
-        input
+        { ...input, abortSignal: signal },
+        "Gemini"
       );
-      if (!startResponse.ok) {
-        await parseJson(startResponse);
-      }
       const resumableUrl = startResponse.headers.get("x-goog-upload-url");
+      await startResponse.body?.cancel().catch(() => {});
       if (!resumableUrl) {
         throw new ProviderHTTPError('Gemini file upload did not return "x-goog-upload-url".', 500);
       }
@@ -1308,7 +1307,7 @@ class GeminiFilesClient implements FilesClient {
         allowedHostSuffixes: ["googleapis.com"],
         allowUnsafe: this.allowUnsafeEndpoints
       }).toString();
-      const uploadResponse = await withRetry(
+      const uploadResponse = await withResponseRetry(
         () =>
           this.fetcher(trustedUploadURL, {
             method: "POST",
@@ -1321,7 +1320,8 @@ class GeminiFilesClient implements FilesClient {
             signal,
             body: uploaded.body
           }),
-        input
+        { ...input, abortSignal: signal },
+        "Gemini"
       );
       return normalizeUploadedFile(await parseJson(uploadResponse));
     } finally {
@@ -1332,7 +1332,11 @@ class GeminiFilesClient implements FilesClient {
   async get(input: FileGetInput): Promise<UploadedFile> {
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
-      const response = await withRetry(() => this.fetcher(this.url(encodeGeminiResourceName(input.name, "Gemini file name")), { method: "GET", signal }), input);
+      const response = await withResponseRetry(
+        () => this.fetcher(this.url(encodeGeminiResourceName(input.name, "Gemini file name")), { method: "GET", signal }),
+        { ...input, abortSignal: signal },
+        "Gemini"
+      );
       return normalizeUploadedFile(await parseJson(response));
     } finally {
       cleanup();
@@ -1342,9 +1346,10 @@ class GeminiFilesClient implements FilesClient {
   async list(input: FileListInput = {}) {
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
-      const response = await withRetry(
+      const response = await withResponseRetry(
         () => this.fetcher(this.url("files", { pageSize: input.pageSize, pageToken: input.pageToken }), { method: "GET", signal }),
-        input
+        { ...input, abortSignal: signal },
+        "Gemini"
       );
       const json = await parseJson(response);
       return {
@@ -1360,7 +1365,11 @@ class GeminiFilesClient implements FilesClient {
   async delete(input: FileDeleteInput) {
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
-      const response = await withRetry(() => this.fetcher(this.url(encodeGeminiResourceName(input.name, "Gemini file name")), { method: "DELETE", signal }), input);
+      const response = await withResponseRetry(
+        () => this.fetcher(this.url(encodeGeminiResourceName(input.name, "Gemini file name")), { method: "DELETE", signal }),
+        { ...input, abortSignal: signal },
+        "Gemini"
+      );
       const json = await parseJson(response);
       return { name: input.name, rawResponse: json };
     } finally {
@@ -1388,7 +1397,7 @@ class GeminiFileSearchStoresClient implements FileSearchStoresClient {
   async create(input: FileSearchStoreCreateInput = {}): Promise<FileSearchStore> {
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
-      const response = await withRetry(
+      const response = await withResponseRetry(
         () =>
           this.fetcher(this.url("fileSearchStores"), {
             method: "POST",
@@ -1399,7 +1408,8 @@ class GeminiFileSearchStoresClient implements FileSearchStoresClient {
               ...(input.providerOptions ?? {})
             })
           }),
-        input
+        { ...input, abortSignal: signal },
+        "Gemini"
       );
       return normalizeFileSearchStore(await parseJson(response));
     } finally {
@@ -1411,7 +1421,7 @@ class GeminiFileSearchStoresClient implements FileSearchStoresClient {
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
       const uploaded = await uploadBody(input.data);
-      const startResponse = await withRetry(
+      const startResponse = await withResponseRetry(
         () =>
           this.fetcher(
             this.uploadUrl(
@@ -1437,12 +1447,11 @@ class GeminiFileSearchStoresClient implements FileSearchStoresClient {
             })
             }
           ),
-        input
+        { ...input, abortSignal: signal },
+        "Gemini"
       );
-      if (!startResponse.ok) {
-        await parseJson(startResponse);
-      }
       const resumableUrl = startResponse.headers.get("x-goog-upload-url");
+      await startResponse.body?.cancel().catch(() => {});
       if (!resumableUrl) {
         throw new ProviderHTTPError('Gemini file search upload did not return "x-goog-upload-url".', 500);
       }
@@ -1453,7 +1462,7 @@ class GeminiFileSearchStoresClient implements FileSearchStoresClient {
         allowedHostSuffixes: ["googleapis.com"],
         allowUnsafe: this.allowUnsafeEndpoints
       }).toString();
-      const uploadResponse = await withRetry(
+      const uploadResponse = await withResponseRetry(
         () =>
           this.fetcher(trustedUploadURL, {
             method: "POST",
@@ -1466,7 +1475,8 @@ class GeminiFileSearchStoresClient implements FileSearchStoresClient {
             signal,
             body: uploaded.body
           }),
-        input
+        { ...input, abortSignal: signal },
+        "Gemini"
       );
       return pollGeminiOperation(normalizeOperation(await parseJson(uploadResponse)), this.baseURL, this.apiKey, this.fetcher, {
         ...input,
@@ -1480,7 +1490,7 @@ class GeminiFileSearchStoresClient implements FileSearchStoresClient {
   async importFile(input: FileSearchStoreImportInput): Promise<PredictionOperation> {
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
-      const response = await withRetry(
+      const response = await withResponseRetry(
         () =>
           this.fetcher(this.url(`${encodeGeminiResourceName(input.storeName, "Gemini file search store name")}:importFile`), {
             method: "POST",
@@ -1491,7 +1501,8 @@ class GeminiFileSearchStoresClient implements FileSearchStoresClient {
               ...(input.providerOptions ?? {})
             })
           }),
-        input
+        { ...input, abortSignal: signal },
+        "Gemini"
       );
       return pollGeminiOperation(normalizeOperation(await parseJson(response)), this.baseURL, this.apiKey, this.fetcher, {
         ...input,
@@ -1505,7 +1516,11 @@ class GeminiFileSearchStoresClient implements FileSearchStoresClient {
   async get(input: FileSearchStoreGetInput): Promise<FileSearchStore> {
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
-      const response = await withRetry(() => this.fetcher(this.url(encodeGeminiResourceName(input.name, "Gemini file search store name")), { method: "GET", signal }), input);
+      const response = await withResponseRetry(
+        () => this.fetcher(this.url(encodeGeminiResourceName(input.name, "Gemini file search store name")), { method: "GET", signal }),
+        { ...input, abortSignal: signal },
+        "Gemini"
+      );
       return normalizeFileSearchStore(await parseJson(response));
     } finally {
       cleanup();
@@ -1515,9 +1530,10 @@ class GeminiFileSearchStoresClient implements FileSearchStoresClient {
   async list(input: FileSearchStoreListInput = {}) {
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
-      const response = await withRetry(
+      const response = await withResponseRetry(
         () => this.fetcher(this.url("fileSearchStores", { pageSize: input.pageSize, pageToken: input.pageToken }), { method: "GET", signal }),
-        input
+        { ...input, abortSignal: signal },
+        "Gemini"
       );
       const json = await parseJson(response);
       return {
@@ -1533,7 +1549,11 @@ class GeminiFileSearchStoresClient implements FileSearchStoresClient {
   async delete(input: FileSearchStoreDeleteInput) {
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
-      const response = await withRetry(() => this.fetcher(this.url(encodeGeminiResourceName(input.name, "Gemini file search store name")), { method: "DELETE", signal }), input);
+      const response = await withResponseRetry(
+        () => this.fetcher(this.url(encodeGeminiResourceName(input.name, "Gemini file search store name")), { method: "DELETE", signal }),
+        { ...input, abortSignal: signal },
+        "Gemini"
+      );
       const json = await parseJson(response);
       return { name: input.name, rawResponse: json };
     } finally {
@@ -1560,7 +1580,7 @@ class GeminiContextCachesClient implements ContextCachesClient {
     }
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
-      const response = await withRetry(
+      const response = await withResponseRetry(
         () =>
           this.fetcher(this.url("cachedContents"), {
             method: "POST",
@@ -1577,7 +1597,8 @@ class GeminiContextCachesClient implements ContextCachesClient {
               ...(input.providerOptions ?? {})
             })
           }),
-        input
+        { ...input, abortSignal: signal },
+        "Gemini"
       );
       return normalizeCachedContent(await parseJson(response));
     } finally {
@@ -1588,7 +1609,11 @@ class GeminiContextCachesClient implements ContextCachesClient {
   async get(input: ContextCacheGetInput): Promise<CachedContent> {
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
-      const response = await withRetry(() => this.fetcher(this.url(encodeGeminiResourceName(input.name, "Gemini cache name")), { method: "GET", signal }), input);
+      const response = await withResponseRetry(
+        () => this.fetcher(this.url(encodeGeminiResourceName(input.name, "Gemini cache name")), { method: "GET", signal }),
+        { ...input, abortSignal: signal },
+        "Gemini"
+      );
       return normalizeCachedContent(await parseJson(response));
     } finally {
       cleanup();
@@ -1598,9 +1623,10 @@ class GeminiContextCachesClient implements ContextCachesClient {
   async list(input: ContextCacheListInput = {}) {
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
-      const response = await withRetry(
+      const response = await withResponseRetry(
         () => this.fetcher(this.url("cachedContents", { pageSize: input.pageSize, pageToken: input.pageToken }), { method: "GET", signal }),
-        input
+        { ...input, abortSignal: signal },
+        "Gemini"
       );
       const json = await parseJson(response);
       return {
@@ -1616,7 +1642,11 @@ class GeminiContextCachesClient implements ContextCachesClient {
   async delete(input: ContextCacheDeleteInput) {
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
-      const response = await withRetry(() => this.fetcher(this.url(encodeGeminiResourceName(input.name, "Gemini cache name")), { method: "DELETE", signal }), input);
+      const response = await withResponseRetry(
+        () => this.fetcher(this.url(encodeGeminiResourceName(input.name, "Gemini cache name")), { method: "DELETE", signal }),
+        { ...input, abortSignal: signal },
+        "Gemini"
+      );
       const json = await parseJson(response);
       return { name: input.name, rawResponse: json };
     } finally {
@@ -1656,7 +1686,7 @@ class GeminiBatchesClient implements BatchesClient {
   async create(input: BatchCreateInput): Promise<BatchJob> {
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
-      const response = await withRetry(
+      const response = await withResponseRetry(
         () =>
           this.fetcher(this.url(`models/${encodeGeminiPathSegment(input.modelId, "Gemini model ID")}:batchGenerateContent`), {
             method: "POST",
@@ -1676,7 +1706,8 @@ class GeminiBatchesClient implements BatchesClient {
               })
             })
           }),
-        input
+        { ...input, abortSignal: signal },
+        "Gemini"
       );
       return normalizeBatchJob(await parseJson(response));
     } finally {
@@ -1687,7 +1718,11 @@ class GeminiBatchesClient implements BatchesClient {
   async get(input: BatchGetInput): Promise<BatchJob> {
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
-      const response = await withRetry(() => this.fetcher(this.url(encodeGeminiResourceName(input.name, "Gemini batch name")), { method: "GET", signal }), input);
+      const response = await withResponseRetry(
+        () => this.fetcher(this.url(encodeGeminiResourceName(input.name, "Gemini batch name")), { method: "GET", signal }),
+        { ...input, abortSignal: signal },
+        "Gemini"
+      );
       return normalizeBatchJob(await parseJson(response));
     } finally {
       cleanup();
@@ -1697,9 +1732,10 @@ class GeminiBatchesClient implements BatchesClient {
   async list(input: BatchListInput = {}) {
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
-      const response = await withRetry(
+      const response = await withResponseRetry(
         () => this.fetcher(this.url("batches", { pageSize: input.pageSize, pageToken: input.pageToken }), { method: "GET", signal }),
-        input
+        { ...input, abortSignal: signal },
+        "Gemini"
       );
       const json = await parseJson(response);
       return {
@@ -1715,7 +1751,7 @@ class GeminiBatchesClient implements BatchesClient {
   async cancel(input: BatchCancelInput): Promise<BatchJob> {
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
-      const response = await withRetry(
+      const response = await withResponseRetry(
         () =>
           this.fetcher(this.url(`${encodeGeminiResourceName(input.name, "Gemini batch name")}:cancel`), {
             method: "POST",
@@ -1723,7 +1759,8 @@ class GeminiBatchesClient implements BatchesClient {
             signal,
             body: JSON.stringify(input.providerOptions ?? {})
           }),
-        input
+        { ...input, abortSignal: signal },
+        "Gemini"
       );
       return normalizeBatchJob(await parseJson(response));
     } finally {
@@ -1734,7 +1771,11 @@ class GeminiBatchesClient implements BatchesClient {
   async delete(input: BatchDeleteInput) {
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
-      const response = await withRetry(() => this.fetcher(this.url(`${encodeGeminiResourceName(input.name, "Gemini batch name")}:delete`), { method: "POST", signal }), input);
+      const response = await withResponseRetry(
+        () => this.fetcher(this.url(`${encodeGeminiResourceName(input.name, "Gemini batch name")}:delete`), { method: "POST", signal }),
+        { ...input, abortSignal: signal },
+        "Gemini"
+      );
       const json = await parseJson(response);
       return { name: input.name, rawResponse: json };
     } finally {
@@ -1784,14 +1825,15 @@ class GeminiInteractionsClient implements InteractionsClient {
     const { signal, cleanup } = withTimeoutSignal(input);
     const send = async (segment: InteractionCreateInput) => {
       const body = JSON.stringify(this.body(segment));
-      const response = await withRetry(
+      const response = await withResponseRetry(
         () => this.fetcher(this.url("interactions"), {
           method: "POST",
           headers: { "content-type": "application/json" },
           signal,
           body
         }),
-        { ...input, abortSignal: signal }
+        { ...input, abortSignal: signal },
+        "Gemini"
       );
       return normalizeInteraction(await parseJson(response));
     };
@@ -1805,7 +1847,11 @@ class GeminiInteractionsClient implements InteractionsClient {
   async get(input: InteractionGetInput) {
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
-      const response = await withRetry(() => this.fetcher(this.url(`interactions/${encodeGeminiPathSegment(input.id, "Gemini interaction ID")}`), { method: "GET", signal }), input);
+      const response = await withResponseRetry(
+        () => this.fetcher(this.url(`interactions/${encodeGeminiPathSegment(input.id, "Gemini interaction ID")}`), { method: "GET", signal }),
+        { ...input, abortSignal: signal },
+        "Gemini"
+      );
       return normalizeInteraction(await parseJson(response));
     } finally {
       cleanup();
@@ -1815,14 +1861,15 @@ class GeminiInteractionsClient implements InteractionsClient {
   async cancel(input: InteractionCancelInput) {
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
-      const response = await withRetry(
+      const response = await withResponseRetry(
         () =>
           this.fetcher(this.url(`interactions/${encodeGeminiPathSegment(input.id, "Gemini interaction ID")}/cancel`), {
             method: "POST",
             headers: { "content-type": "application/json" },
             signal
           }),
-        input
+        { ...input, abortSignal: signal },
+        "Gemini"
       );
       return normalizeInteraction(await parseJson(response));
     } finally {
@@ -1833,13 +1880,11 @@ class GeminiInteractionsClient implements InteractionsClient {
   async delete(input: InteractionDeleteInput) {
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
-      const response = await withRetry(
+      const response = await withResponseRetry(
         () => this.fetcher(this.url(`interactions/${encodeGeminiPathSegment(input.id, "Gemini interaction ID")}`), { method: "DELETE", signal }),
-        input
+        { ...input, abortSignal: signal },
+        "Gemini"
       );
-      if (!response.ok) {
-        await parseJson(response);
-      }
       const bytes = await readBodyWithLimit(response, {
         maxBytes: MAX_JSON_RESPONSE_BYTES,
         provider: "gemini",
@@ -1860,7 +1905,7 @@ class GeminiInteractionsClient implements InteractionsClient {
   ): Promise<AsyncIterable<StreamEvent>> {
     const { signal, cleanup } = withTimeoutSignal(input);
     const resumeInput = "id" in input ? input : undefined;
-    const response = await withRetry(
+    const response = await withResponseRetry(
       () =>
         resumeInput
           ? this.fetcher(
@@ -1883,7 +1928,8 @@ class GeminiInteractionsClient implements InteractionsClient {
               signal,
               body: JSON.stringify(this.body(input as InteractionCreateInput, true))
             }),
-      { ...input, abortSignal: signal }
+      { ...input, abortSignal: signal },
+      "Gemini"
     ).catch((error) => { cleanup(); throw error; });
 
     return (async function* () {
@@ -2085,7 +2131,7 @@ class GeminiPredictionModel implements PredictionModel {
     const action = typeof input.providerOptions?.action === "string" ? input.providerOptions.action : "predict";
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
-      const response = await withRetry(
+      const response = await withResponseRetry(
         () =>
           this.fetcher(this.url(action), {
             method: "POST",
@@ -2093,7 +2139,8 @@ class GeminiPredictionModel implements PredictionModel {
             signal,
             body: JSON.stringify(this.body(input))
           }),
-        input
+        { ...input, abortSignal: signal },
+        "Gemini"
       );
       return normalizePredictionResult(await parseJson(response));
     } finally {
@@ -2104,7 +2151,7 @@ class GeminiPredictionModel implements PredictionModel {
   async rawPredict(input: PredictionModelInput): Promise<PredictionResult> {
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
-      const response = await withRetry(
+      const response = await withResponseRetry(
         () =>
           this.fetcher(this.url("rawPredict"), {
             method: "POST",
@@ -2112,7 +2159,8 @@ class GeminiPredictionModel implements PredictionModel {
             signal,
             body: JSON.stringify(this.body(input))
           }),
-        input
+        { ...input, abortSignal: signal },
+        "Gemini"
       );
       return normalizePredictionResult(await parseJson(response));
     } finally {
@@ -2123,7 +2171,7 @@ class GeminiPredictionModel implements PredictionModel {
   async invoke(input: PredictionModelInput): Promise<PredictionResult> {
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
-      const response = await withRetry(
+      const response = await withResponseRetry(
         () =>
           this.fetcher(this.url("invoke"), {
             method: "POST",
@@ -2131,7 +2179,8 @@ class GeminiPredictionModel implements PredictionModel {
             signal,
             body: JSON.stringify(this.body(input))
           }),
-        input
+        { ...input, abortSignal: signal },
+        "Gemini"
       );
       return normalizePredictionResult(await parseJson(response));
     } finally {
@@ -2142,7 +2191,7 @@ class GeminiPredictionModel implements PredictionModel {
   async predictLongRunning(input: PredictionModelInput): Promise<PredictionOperation> {
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
-      const response = await withRetry(
+      const response = await withResponseRetry(
         () =>
           this.fetcher(this.url("predictLongRunning"), {
             method: "POST",
@@ -2150,7 +2199,8 @@ class GeminiPredictionModel implements PredictionModel {
             signal,
             body: JSON.stringify(this.body(input))
           }),
-        input
+        { ...input, abortSignal: signal },
+        "Gemini"
       );
       return normalizeOperation(await parseJson(response));
     } finally {
@@ -2161,13 +2211,14 @@ class GeminiPredictionModel implements PredictionModel {
   async fetchPredictionOperation(input: PredictionOperationInput): Promise<PredictionOperation> {
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
-      const response = await withRetry(
+      const response = await withResponseRetry(
         () =>
           this.fetcher(`${this.baseURL}/${encodeGeminiResourceName(input.name, "Gemini operation name")}?key=${this.apiKey}`, {
             method: "GET",
             signal
           }),
-        input
+        { ...input, abortSignal: signal },
+        "Gemini"
       );
       return normalizeOperation(await parseJson(response));
     } finally {
@@ -2361,7 +2412,7 @@ class GeminiEmbeddingModel implements EmbeddingModel {
       const embeddings = await Promise.all(
         input.values.map(async (value) => {
           const part = embeddingValueToPart(value, this.modelId);
-          const response = await withRetry(
+          const response = await withResponseRetry(
             () =>
               this.fetcher(`${this.baseURL}/models/${encodeGeminiPathSegment(this.modelId, "Gemini model ID")}:embedContent?key=${this.apiKey}`, {
                 method: "POST",
@@ -2371,7 +2422,8 @@ class GeminiEmbeddingModel implements EmbeddingModel {
                   content: { parts: [part] }
                 })
               }),
-            input
+            { ...input, abortSignal: signal },
+            "Gemini"
           );
           const json = await parseJson(response);
           return json.embedding.values;
@@ -2512,7 +2564,7 @@ class GeminiTranscriptionModel implements TranscriptionModel {
     const { signal, cleanup } = withTimeoutSignal(input);
 
     try {
-      const response = await withRetry(
+      const response = await withResponseRetry(
         () =>
           this.fetcher(`${this.baseURL}/models/${encodeGeminiPathSegment(this.modelId, "Gemini model ID")}:generateContent?key=${this.apiKey}`, {
             method: "POST",
@@ -2541,7 +2593,8 @@ class GeminiTranscriptionModel implements TranscriptionModel {
             store: generateContentStorage(input.providerOptions)
             })
           }),
-        input
+        { ...input, abortSignal: signal },
+        "Gemini"
       );
 
       const json = await parseJson(response);
@@ -2581,7 +2634,7 @@ class GeminiSpeechModel implements SpeechModel {
     const { signal, cleanup } = withTimeoutSignal(input);
 
     try {
-      const response = await withRetry(
+      const response = await withResponseRetry(
         () =>
           this.fetcher(`${this.baseURL}/models/${encodeGeminiPathSegment(this.modelId, "Gemini model ID")}:generateContent?key=${this.apiKey}`, {
             method: "POST",
@@ -2603,7 +2656,8 @@ class GeminiSpeechModel implements SpeechModel {
             store: generateContentStorage(input.providerOptions)
             })
           }),
-        input
+        { ...input, abortSignal: signal },
+        "Gemini"
       );
 
       const json = await parseJson(response);
@@ -2629,7 +2683,7 @@ class GeminiSpeechModel implements SpeechModel {
   }): Promise<AsyncIterable<SpeechResult>> {
     rejectObjectVoice(input.voice);
     const { signal, cleanup } = withTimeoutSignal(input);
-    const response = await withRetry(
+    const response = await withResponseRetry(
       () =>
         this.fetcher(`${this.baseURL}/models/${encodeGeminiPathSegment(this.modelId, "Gemini model ID")}:streamGenerateContent?alt=sse&key=${this.apiKey}`, {
           method: "POST",
@@ -2651,8 +2705,9 @@ class GeminiSpeechModel implements SpeechModel {
             store: generateContentStorage(input.providerOptions)
           })
         }),
-      input
-    );
+      { ...input, abortSignal: signal },
+      "Gemini"
+    ).catch((error) => { cleanup(); throw error; });
 
     return (async function* () {
       try {
@@ -2709,7 +2764,7 @@ class GeminiImageGenerationModel implements ImageGenerationModel {
     const { generationConfig, providerOptions } = splitGenerationConfig(input.providerOptions);
 
     try {
-      const response = await withRetry(
+      const response = await withResponseRetry(
         () =>
           this.fetcher(`${this.baseURL}/models/${encodeGeminiPathSegment(this.modelId, "Gemini model ID")}:generateContent?key=${this.apiKey}`, {
             method: "POST",
@@ -2742,7 +2797,8 @@ class GeminiImageGenerationModel implements ImageGenerationModel {
               }
             })
           }),
-        input
+        { ...input, abortSignal: signal },
+        "Gemini"
       );
 
       const json = await parseJson(response);
@@ -2784,7 +2840,7 @@ class GeminiMusicGenerationModel implements MusicGenerationModel {
     const { generationConfig, providerOptions } = splitGenerationConfig(input.providerOptions);
 
     try {
-      const response = await withRetry(
+      const response = await withResponseRetry(
         () =>
           this.fetcher(`${this.baseURL}/models/${encodeGeminiPathSegment(this.modelId, "Gemini model ID")}:generateContent?key=${this.apiKey}`, {
             method: "POST",
@@ -2808,7 +2864,8 @@ class GeminiMusicGenerationModel implements MusicGenerationModel {
               }
             })
           }),
-        input
+        { ...input, abortSignal: signal },
+        "Gemini"
       );
 
       const json = await parseJson(response);
@@ -2855,7 +2912,7 @@ class GeminiVideoGenerationModel implements VideoGenerationModel {
     const startedAt = Date.now();
 
     try {
-      const response = await withRetry(
+      const response = await withResponseRetry(
         () =>
           this.fetcher(`${this.baseURL}/models/${encodeGeminiPathSegment(this.modelId, "Gemini model ID")}:predictLongRunning?key=${this.apiKey}`, {
             method: "POST",
@@ -2878,7 +2935,8 @@ class GeminiVideoGenerationModel implements VideoGenerationModel {
               }
             })
           }),
-        input
+        { ...input, abortSignal: signal },
+        "Gemini"
       );
 
       let operation = await parseJson(response);
@@ -2890,13 +2948,14 @@ class GeminiVideoGenerationModel implements VideoGenerationModel {
           throw new Error(`Gemini video generation timed out after ${timeoutMs}ms.`);
         }
         await sleep(pollIntervalMs, signal);
-        const pollResponse = await withRetry(
+        const pollResponse = await withResponseRetry(
           () =>
             this.fetcher(`${this.baseURL}/${encodeGeminiResourceName(operationName, "Gemini operation name")}?key=${this.apiKey}`, {
               method: "GET",
               signal
             }),
-          input
+          { ...input, abortSignal: signal },
+          "Gemini"
         );
         operation = await parseJson(pollResponse);
       }
@@ -2940,7 +2999,7 @@ class GeminiGroundedLanguageModel implements GroundedLanguageModel {
     const { signal, cleanup } = withTimeoutSignal(input);
 
     try {
-      const send = (continuationToken?: string) => withRetry(
+      const send = (continuationToken?: string) => withResponseRetry(
         () =>
           this.fetcher(`${this.baseURL}/models/${encodeGeminiPathSegment(this.modelId, "Gemini model ID")}:generateContent?key=${this.apiKey}`, {
             method: "POST",
@@ -2961,7 +3020,8 @@ class GeminiGroundedLanguageModel implements GroundedLanguageModel {
               } as ModelGenerateInput)
             })
           }),
-        { ...input, abortSignal: signal }
+        { ...input, abortSignal: signal },
+        "Gemini"
       ).then(parseJson);
 
       const { json, segments } = this.modelId === GEMINI_4_NEON
@@ -3116,7 +3176,7 @@ class GeminiRealtimeModel implements RealtimeModel {
       timeoutMs: options?.timeoutMs
     });
     try {
-      const response = await withRetry(
+      const response = await withResponseRetry(
         () =>
           this.fetcher(url, {
             method: "POST",
@@ -3134,7 +3194,9 @@ class GeminiRealtimeModel implements RealtimeModel {
                 ...(providerOptions.uses ? { uses: providerOptions.uses } : {})
               }
             })
-          })
+          }),
+        { abortSignal: signal },
+        "Gemini"
       );
       const body = await parseJson(response);
     const authToken =

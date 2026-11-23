@@ -13,6 +13,7 @@ import type { AnthropicConfig } from "@anthropic-ai/sdk/core/credentials";
 import {
   imageInputToDataUrl,
   ConfigurationError,
+  ParseError,
   ProviderHTTPError,
   UnsupportedFeatureError,
   ValidationError,
@@ -49,6 +50,34 @@ const toolInputSchema = (schema: unknown): Record<string, unknown> => {
 
 const ANTHROPIC_API_VERSION_2023_06_01 = "2023-06-01";
 const ANTHROPIC_API_VERSION_2026_10_21 = "2026-10-21";
+const MAX_ANTHROPIC_TOOL_ARGS_CHARS = 1024 * 1024;
+
+const parseAnthropicJson = (raw: string, context: string): any => {
+  try {
+    return JSON.parse(raw);
+  } catch (error) {
+    throw new ParseError(`Anthropic ${context} contained invalid JSON.`, { cause: error });
+  }
+};
+
+const anthropicStreamErrorStatus = (errorType: string | undefined): number => {
+  switch (errorType) {
+    case "overloaded_error":
+      return 529;
+    case "rate_limit_error":
+      return 429;
+    case "invalid_request_error":
+      return 400;
+    case "authentication_error":
+      return 401;
+    case "permission_error":
+      return 403;
+    case "not_found_error":
+      return 404;
+    default:
+      return 500;
+  }
+};
 
 const anthropicSampling = (input: ModelGenerateInput): Record<string, unknown> => ({
   ...(input.topP !== undefined ? { top_p: input.topP } : {}),
@@ -1707,9 +1736,19 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
           const toolBuffers = new Map<number, { id: string; name: string; input: string; toolsetName?: string }>();
           let stopReason: string | undefined;
           let usage: GenerateResult["usage"];
+          let sawMessageStop = false;
 
           for await (const event of streamSSE(response)) {
-            const json = JSON.parse(event.data);
+            const json = parseAnthropicJson(event.data, "streaming event");
+
+            if (event.event === "error" || json.type === "error") {
+              const errorType = typeof json.error?.type === "string" ? json.error.type : undefined;
+              const message =
+                typeof json.error?.message === "string" && json.error.message
+                  ? `Anthropic streaming error (${errorType ?? "api_error"}): ${json.error.message}`
+                  : `Anthropic streaming request failed with ${errorType ?? "error"}.`;
+              throw new ProviderHTTPError(message, anthropicStreamErrorStatus(errorType), { responseBody: event.data });
+            }
 
             if (event.event === "message_start") {
               if (providerOptions.thread && typeof json.message?.id === "string") {
@@ -1762,7 +1801,11 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
             if (event.event === "content_block_delta" && json.delta?.type === "input_json_delta") {
               const current = toolBuffers.get(json.index);
               if (current) {
-                current.input += json.delta.partial_json;
+                const partial = typeof json.delta.partial_json === "string" ? json.delta.partial_json : "";
+                if (current.input.length + partial.length > MAX_ANTHROPIC_TOOL_ARGS_CHARS) {
+                  throw new ParseError(`Anthropic tool call arguments exceeded ${MAX_ANTHROPIC_TOOL_ARGS_CHARS} characters.`);
+                }
+                current.input += partial;
               }
             }
 
@@ -1793,7 +1836,7 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
                   toolCall: {
                     id: current.id,
                     name: current.name,
-                    input: JSON.parse(current.input || "{}"),
+                    input: parseAnthropicJson(current.input || "{}", "tool call arguments"),
                     ...(current.toolsetName ? { providerMetadata: { toolset_name: current.toolsetName } } : {})
                   }
                 } satisfies StreamEvent;
@@ -1801,6 +1844,7 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
             }
 
             if (event.event === "message_stop") {
+              sawMessageStop = true;
               const providerFinishReason = stopReason ?? json.stop_reason;
               yield {
                 type: "finish",
@@ -1809,6 +1853,10 @@ class AnthropicLanguageModel implements LanguageModel<AnthropicLanguageModelOpti
                 ...(usage ? { usage } : {})
               } satisfies StreamEvent;
             }
+          }
+
+          if (!sawMessageStop) {
+            throw new ParseError("Anthropic streaming response ended before message_stop.");
           }
         } finally {
           cleanup();
