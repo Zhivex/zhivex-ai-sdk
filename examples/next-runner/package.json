@@ -16,12 +16,12 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@ai-sdk/react": "4.0.169",
+    "@ai-sdk/react": "4.0.177",
     "@zhivex-ai/openai": "0.19.0",
     "@zhivex-ai/react": "0.10.0",
     "@zhivex-ai/sdk": "1.41.0",
-    "ai": "7.0.165",
-    "next": "16.4.5",
+    "ai": "7.0.173",
+    "next": "16.4.6",
     "react": "19.3.1",
     "react-dom": "19.3.1"
   },
