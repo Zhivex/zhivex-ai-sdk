@@ -9,6 +9,9 @@ const isPlainObject = (value: object) => {
   return prototype === Object.prototype || prototype === null;
 };
 
+const isPlainArray = (value: unknown[]) =>
+  Object.getPrototypeOf(value) === Array.prototype && !("toJSON" in value);
+
 const compare = (left: unknown, right: unknown, depth: number): Verdict => {
   if (depth > 256) return UNSURE;
   // Boxed primitives and toJSON results can serialize like primitives, so a
@@ -23,7 +26,8 @@ const compare = (left: unknown, right: unknown, depth: number): Verdict => {
   if (typeof left !== "object" || typeof right !== "object" || right === null) return UNSURE;
 
   if (Array.isArray(left)) {
-    if (!Array.isArray(right)) return UNSURE;
+    // Array subclasses and toJSON hooks can change the serialization.
+    if (!Array.isArray(right) || !isPlainArray(left) || !isPlainArray(right)) return UNSURE;
     if (left.length !== right.length) return false;
     for (let index = 0; index < left.length; index += 1) {
       const verdict = compare(left[index], right[index], depth + 1);

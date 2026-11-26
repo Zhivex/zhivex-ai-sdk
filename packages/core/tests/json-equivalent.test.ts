@@ -37,6 +37,10 @@ describe("jsonEquivalent", () => {
     expectSameAsStringify({ value: "x" }, { value: new String("x") });
     expectSameAsStringify({ a: { toJSON: () => undefined }, b: 1 }, { b: 1 });
     expectSameAsStringify({ a: { toJSON: () => [1] } }, { a: [1] });
+    expectSameAsStringify([1], Object.assign([1], { toJSON: () => [2] }));
+    expectSameAsStringify(Object.assign([1], { toJSON: () => [1] }), [1]);
+    class Tagged extends Array<number> { toJSON() { return "tagged"; } }
+    expectSameAsStringify(Tagged.from([1]), [1]);
     expectSameAsStringify(new Map([["a", 1]]), {});
     expectSameAsStringify(undefined, undefined);
     expect(() => jsonEquivalent({ big: 1n }, { big: 1n })).toThrow(TypeError);
