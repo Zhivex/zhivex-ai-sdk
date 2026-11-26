@@ -83,6 +83,7 @@
   "http-retry.d.ts": "0e0fcbb2e567f192d67b174dbe0e25f255b19a3f5470fd77a6d215761029e397",
   "image-input.d.ts": "7fda6d66ac8652751c430edb0b9dd4a5149a17901ac8a7705e4916564b12625d",
   "index.d.ts": "e69578fc2a306a4caf5667efa5e1b26bf378f8003b28a97aef4e315473234d12",
+  "json-equivalent.d.ts": "9dba76bd478c0aba9ec9204c6e2ddb551ab104b781274d5c68e06865a0203148",
   "json-schema.d.ts": "d4f6c75e9b293feac8b85cad662168ccc61b49abe2aadbf6ecdf886093fe4d6b",
   "latam-redaction.d.ts": "cb17f0d56915211e88f1104f11008460c99a610d79d4665c02fee7640b9313b4",
   "live-agent.d.ts": "b3b9fdf7bf23ecd4417f51ea6c15ec9e24fa8a16afd493c168ecaad8d358fb21",

@@ -29,6 +29,11 @@ import {
   defaultMemoryMessages
 } from "./shared.js";
 
+// `normalized` is already a fresh validated copy and resolveScope validated the
+// scope, so only the scope needs copying before the state is retained.
+const withStoredScope = (normalized: AgentRunState, scope: AgentStoreScope | undefined): AgentRunState =>
+  scope ? { ...normalized, scope: JSON.parse(JSON.stringify(scope)) as AgentStoreScope } : normalized;
+
 const cloneMessages = (messages: ModelMessage[]): ModelMessage[] =>
   JSON.parse(JSON.stringify(messages)) as ModelMessage[];
 
@@ -58,7 +63,7 @@ export const createInMemoryAgentRunStore = (options: AgentRunStoreScopeOptions =
     reconciliationFencing: true,
     load(runId, scope) {
       const state = states.get(runKey(runId, scope));
-      return state ? cloneState(normalizeAgentRunState(state)) : undefined;
+      return state ? cloneState(state) : undefined;
     },
     findByIdempotencyKey(idempotencyKeyValue, scope) {
       const runId = idempotencyKeys.get(idempotencyKey(idempotencyKeyValue, scope));
@@ -66,12 +71,12 @@ export const createInMemoryAgentRunStore = (options: AgentRunStoreScopeOptions =
         return undefined;
       }
       const state = states.get(runId);
-      return state ? cloneState(normalizeAgentRunState(state)) : undefined;
+      return state ? cloneState(state) : undefined;
     },
     findByParentRunId(parentRunId, scope) {
       return [...(parentRunIds.get(scopedKey(resolveScope(options.scope, scope), parentRunId)) ?? [])].flatMap((runId) => {
         const state = states.get(runId);
-        return state ? [cloneState(normalizeAgentRunState(state))] : [];
+        return state ? [cloneState(state)] : [];
       });
     },
     claimIdempotencyKey(state) {
@@ -111,7 +116,7 @@ export const createInMemoryAgentRunStore = (options: AgentRunStoreScopeOptions =
           throw new ConflictError("AgentRunState idempotency key conflict.");
         }
       }
-      const stored = cloneState({ ...normalized, ...(scope ? { scope } : {}) });
+      const stored = withStoredScope(normalized, scope);
       removeParentIndex(current);
       states.set(runKey(normalized.runId, scope), stored);
       if (normalized.idempotencyKey) idempotencyKeys.set(idempotencyKey(normalized.idempotencyKey, scope), runKey(normalized.runId, scope));

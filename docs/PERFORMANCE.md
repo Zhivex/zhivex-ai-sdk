@@ -107,3 +107,44 @@ resolves their relative imports to the unchanged checkout dependencies, and
 removes the temporary files on exit. It does not switch branches or modify the
 working tree. The same benchmark runs both implementations; its new tuning
 options are ignored by the older implementation.
+
+## Agent checkpoint copies
+
+Agent tool loops validate and checkpoint the complete run state on every step.
+Before this change, each validated copy was serialized a second time, the
+in-memory run store normalized every loaded state twice, and each step compared
+its history prefix by calling `JSON.stringify` on every message. With a history
+that grows on every step, those repeated copies dominated long runs.
+
+The runtime now keeps one validated copy per normalization, parses an existing
+checkpoint string once more instead of revalidating it, and compares history
+prefixes structurally with an exact `JSON.stringify` fallback for values outside
+plain JSON data. Stored state shapes, validation, revisions, and public APIs are
+unchanged.
+
+Measured locally with Node 22.23.5 against baseline commit
+`d0667bfea53aa22f87373cab0371ccd2c74209a9`. Each step returns one tool call
+whose result is a 4 KiB string; the run ends after the configured number of
+steps. Each case uses one warmup and the median of three samples. No provider
+calls are made.
+
+| Run store | Steps | Before | After | Change |
+| --- | ---: | ---: | ---: | ---: |
+| None | 50 | 45.2 ms | 19.4 ms | 2.3× faster |
+| None | 100 | 143.3 ms | 67.2 ms | 2.1× faster |
+| None | 200 | 658.5 ms | 283.3 ms | 2.3× faster |
+| In-memory | 50 | 934.0 ms | 540.9 ms | 1.7× faster |
+| In-memory | 100 | 3,976.6 ms | 1,807.4 ms | 2.2× faster |
+| In-memory | 200 | 17,325.6 ms | 7,880.1 ms | 2.2× faster |
+
+Full-state checkpoints still copy the whole run state on every step, so total
+work grows with the square of the step count. Use compaction or offload large
+tool outputs to artifacts for long runs. Durable stores benefit from the shared
+copy reduction; their own I/O is not measured here.
+
+Raw data: [before](./benchmarks/agent-checkpoint-before.json),
+[after](./benchmarks/agent-checkpoint-after.json).
+
+```bash
+bun run build && node scripts/benchmarks/agent-checkpoint-scaling.mjs
+```

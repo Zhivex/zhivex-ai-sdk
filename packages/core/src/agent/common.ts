@@ -1,4 +1,5 @@
 import { isUnknownToolExecution } from "../tool-execution-outcome.js";
+import { jsonEquivalent } from "../json-equivalent.js";
 import {
   getAgentApprovalRequests
 } from "../agent-approval.js";
@@ -116,7 +117,7 @@ export const messagePrefixLength = (
     return 0;
   }
   for (let index = 0; index < prefix.length; index += 1) {
-    if (JSON.stringify(prefix[index]) !== JSON.stringify(messages[index])) {
+    if (!jsonEquivalent(prefix[index], messages[index])) {
       return 0;
     }
   }
@@ -176,8 +177,9 @@ export const toOutput = <TOutput = unknown>(state: AgentRunState): AgentRunOutpu
 export const normalizeApprovalStatus = (status: AgentStatus): AgentStatus =>
   status === "suspended" ? "waiting_approval" : status;
 
-export const cloneState = (state: AgentRunState): AgentRunState =>
-  JSON.parse(JSON.stringify(normalizeAgentRunState(state))) as AgentRunState;
+// normalizeAgentRunState validates and returns a fresh JSON-compatible deep
+// copy, so a second JSON round trip would only repeat the same work.
+export const cloneState = (state: AgentRunState): AgentRunState => normalizeAgentRunState(state);
 
 export const countToolCallsInSteps = (steps: AgentStep[]): number =>
   steps.reduce((total, step) => total + countToolCalls(step.response?.messages ?? []), 0);

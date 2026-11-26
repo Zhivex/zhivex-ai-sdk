@@ -1,0 +1,35 @@
+{
+  "runtime": "node v22.23.5",
+  "results": [
+    {
+      "store": "none",
+      "steps": 50,
+      "medianMs": 45.2
+    },
+    {
+      "store": "none",
+      "steps": 100,
+      "medianMs": 143.3
+    },
+    {
+      "store": "none",
+      "steps": 200,
+      "medianMs": 658.5
+    },
+    {
+      "store": "in-memory",
+      "steps": 50,
+      "medianMs": 934
+    },
+    {
+      "store": "in-memory",
+      "steps": 100,
+      "medianMs": 3976.6
+    },
+    {
+      "store": "in-memory",
+      "steps": 200,
+      "medianMs": 17325.6
+    }
+  ]
+}
