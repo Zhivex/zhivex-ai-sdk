@@ -1,5 +1,13 @@
 # @zhivex-ai/agents
 
+## 1.13.1
+
+### Patch Changes
+
+- ec101e9: Improve npm discoverability: add governance and agent keywords to the SDK, core, and agents packages, and point `@zhivex-ai/core` readers to `@zhivex-ai/sdk` as the recommended entry point.
+- Updated dependencies [ec101e9]
+  - @zhivex-ai/core@1.41.1
+
 ## 1.13.0
 
 ### Minor Changes
