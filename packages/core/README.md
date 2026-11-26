@@ -2,6 +2,8 @@
 
 Shared contracts, runtime helpers, stream utilities, middleware, catalog helpers, and generation primitives for Zhivex AI SDK.
 
+> **Building an app?** Install [`@zhivex-ai/sdk`](https://www.npmjs.com/package/@zhivex-ai/sdk) instead. It re-exports this package with the high-level API, and every provider adapter installs `@zhivex-ai/core` for you. Use `@zhivex-ai/core` directly only when you write a provider adapter or need the low-level contracts. Start with the [main README](https://github.com/Zhivex/zhivex-ai-sdk#readme).
+
 The Beta provider-conformance helpers (`normalizeProviderConformanceReport`, `compareProviderConformanceReports`, `evaluateProviderConformanceGate`, and `renderProviderConformanceMarkdown`) validate schema-versioned support evidence without persisting prompts, responses, or secrets. They distinguish declared, offline, installed-package, and authenticated live results and apply fail-closed TTL/baseline rules.
 
 `@zhivex-ai/core` owns the stable catalog contract and `createModelCatalog`.

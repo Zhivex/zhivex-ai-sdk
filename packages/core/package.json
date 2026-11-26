@@ -151,7 +151,12 @@
     "sdk",
     "llm",
     "core",
-    "typescript"
+    "typescript",
+    "ai-agents",
+    "ai-governance",
+    "guardrails",
+    "tool-calling",
+    "streaming"
   ],
   "publishConfig": {
     "access": "public"
