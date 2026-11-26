@@ -1,8 +1,55 @@
 import { ClientApprovalError, type ClientApprovalDecision, type ClientApprovalSession } from "./approval.js";
 
+const MAX_DECISION_BODY_BYTES = 32 * 1024;
 const MAX_ID_CHARS = 512;
 const MAX_TOKEN_CHARS = 8_192;
 const MAX_REASON_CHARS = 1_000;
+
+class DecisionBodyTooLargeError extends Error {}
+
+const readBoundedJsonBody = async (request: Request, maxBytes: number): Promise<unknown> => {
+  const contentLength = request.headers.get("content-length");
+  if (contentLength !== null) {
+    const trimmed = contentLength.trim();
+    if (/^\d+$/.test(trimmed) && Number(trimmed) > maxBytes) {
+      throw new DecisionBodyTooLargeError("Approval decision request body exceeds limit.");
+    }
+  }
+  if (!request.body) {
+    throw new SyntaxError("Approval decision request body is empty.");
+  }
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let received = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      received += value.byteLength;
+      if (received > maxBytes) {
+        chunks.length = 0;
+        await reader.cancel().catch(() => undefined);
+        throw new DecisionBodyTooLargeError("Approval decision request body exceeds limit.");
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const bytes = new Uint8Array(received);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return JSON.parse(new TextDecoder().decode(bytes)) as unknown;
+};
+
+const isJsonContentType = (header: string | null): boolean => {
+  if (header === null || header.trim() === "") return true;
+  const mediaType = header.split(";", 1)[0]?.trim().toLowerCase() ?? "";
+  return mediaType === "application/json" || /^application\/[\w.+-]+\+json$/.test(mediaType);
+};
 
 const json = (body: unknown, status: number): Response =>
   new Response(JSON.stringify(body), {
@@ -55,10 +102,16 @@ export const handleClientApprovalDecision = async (
   session: ClientApprovalSession,
   request: Request
 ): Promise<Response> => {
+  if (!isJsonContentType(request.headers.get("content-type"))) {
+    return json({ ok: false, code: "invalid" }, 400);
+  }
   let payload: unknown;
   try {
-    payload = await request.json();
-  } catch {
+    payload = await readBoundedJsonBody(request, MAX_DECISION_BODY_BYTES);
+  } catch (error) {
+    if (error instanceof DecisionBodyTooLargeError) {
+      return json({ ok: false, code: "invalid" }, 413);
+    }
     return json({ ok: false, code: "invalid" }, 400);
   }
   try {

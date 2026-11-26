@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
-import { createTextMessage, embed, generateObject, generateText, streamText, tool } from "@zhivex-ai/core";
+import { createTextMessage, embed, generateObject, generateText, ProviderHTTPError, streamText, tool } from "@zhivex-ai/core";
 import { runAgentProviderContractSuite } from "../../core/tests/agent-provider-contract.js";
 import { runLanguageModelContractSuite } from "../../core/tests/provider-contract.js";
 import { createOllama } from "../src/index.ts";
@@ -936,5 +936,50 @@ describe("ollama adapter", () => {
     } finally {
       vi.unstubAllEnvs();
     }
+  });
+
+  it("cancels the underlying NDJSON reader on early break and rejects credentialed redirects", async () => {
+    let cancelled = false;
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(`${JSON.stringify({ message: { content: "one" }, done: false })}\n`));
+        controller.enqueue(new TextEncoder().encode(`${JSON.stringify({ message: { content: "two" }, done: false })}\n`));
+      },
+      cancel() {
+        cancelled = true;
+      }
+    });
+    fetchMock.mockResolvedValueOnce(new Response(body, { status: 200 }));
+    const local = createOllama({ fetch: fetchMock as typeof fetch });
+    const stream = await local("llama3.2").stream({ messages: [createTextMessage("user", "hi")] });
+    for await (const _event of stream) {
+      break;
+    }
+    expect(cancelled).toBe(true);
+
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 307, headers: { location: "https://evil.example" } }));
+    const cloud = createOllama({
+      baseURL: "https://ollama.com",
+      apiKey: "secret-key",
+      fetch: fetchMock as typeof fetch
+    });
+    await expect(generateText({ model: cloud("qwen3"), prompt: "hello" })).rejects.toBeInstanceOf(ProviderHTTPError);
+    expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({ redirect: "manual" });
+  });
+
+  it("retries retryable HTTP statuses on Ollama embed", async () => {
+    fetchMock
+      .mockResolvedValueOnce(new Response("unavailable", { status: 503 }))
+      .mockResolvedValueOnce(Response.json({ embeddings: [[0.4, 0.6]], prompt_eval_count: 1 }));
+
+    const provider = createOllama({ fetch: fetchMock as typeof fetch });
+    const result = await embed({
+      model: provider.embeddingModel("embeddinggemma"),
+      value: "hello",
+      maxRetries: 1,
+      retryBackoffMs: 0
+    });
+    expect(result.embeddings).toEqual([[0.4, 0.6]]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });

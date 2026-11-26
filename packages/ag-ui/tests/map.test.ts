@@ -270,4 +270,87 @@ describe("toAgUiEvents", () => {
     expect(applyJsonPatch(before, delta)).toEqual(after);
     expect(before).toEqual({ run: { status: "running", nested: { a: 1 } }, extra: true });
   });
+
+  it("drops resolved approvals before a subsequent pause and emits RUN_ERROR when source throws", async () => {
+    const pausedEvents: AgentStreamEvent[] = [
+      {
+        type: "agent-approval-request",
+        approval: {
+          kind: "local-tool",
+          provider: "zhivex",
+          id: "apr_1",
+          name: "first",
+          toolCallId: "call_1"
+        }
+      },
+      {
+        type: "agent-approval-resolved",
+        approval: {
+          provider: "zhivex",
+          approvalRequestId: "apr_1",
+          approve: true
+        }
+      },
+      {
+        type: "agent-approval-request",
+        approval: {
+          kind: "local-tool",
+          provider: "zhivex",
+          id: "apr_2",
+          name: "second",
+          toolCallId: "call_2"
+        }
+      },
+      {
+        type: "agent-run-finish",
+        status: "waiting_approval",
+        state: {
+          schemaVersion: 1,
+          runId: "run-1",
+          provider: "mock",
+          modelId: "mock-model",
+          status: "waiting_approval",
+          messages: [],
+          steps: [],
+          toolResults: [],
+          currentStep: 1,
+          maxSteps: 3,
+          outputText: "",
+          pendingApprovals: [{
+            kind: "local-tool",
+            provider: "zhivex",
+            id: "apr_2",
+            name: "second",
+            toolCallId: "call_2"
+          }]
+        }
+      }
+    ];
+    const aguiPaused = await collectAgUiEvents(pausedEvents, options);
+    const finished = aguiPaused.at(-1);
+    expect(finished).toMatchObject({
+      type: "RUN_FINISHED",
+      outcome: {
+        type: "interrupt",
+        interrupts: [{ id: "zhivex:apr_2" }]
+      }
+    });
+
+    async function* failingStream(): AsyncGenerator<AgentStreamEvent> {
+      yield { type: "agent-step-start", stepIndex: 0 };
+      yield { type: "text-delta", textDelta: "partial" };
+      throw new Error("stream boom");
+    }
+    const aguiError = await collectAgUiEvents(failingStream(), options);
+    expect(aguiError.map((event) => event.type)).toEqual([
+      "RUN_STARTED",
+      "STEP_STARTED",
+      "TEXT_MESSAGE_START",
+      "TEXT_MESSAGE_CONTENT",
+      "TEXT_MESSAGE_END",
+      "STEP_FINISHED",
+      "RUN_ERROR"
+    ]);
+    expect(aguiError.at(-1)).toMatchObject({ type: "RUN_ERROR", message: "stream boom" });
+  });
 });

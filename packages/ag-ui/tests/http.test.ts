@@ -130,5 +130,17 @@ describe("handleClientApprovalDecision", () => {
     const invalid = await handleClientApprovalDecision(session, post({ approve: "yes" }));
     expect(invalid.status).toBe(400);
     expect(await invalid.json()).toMatchObject({ code: "invalid" });
+
+    const wrongType = await handleClientApprovalDecision(session, new Request("https://example.test/api/approvals", {
+      method: "POST",
+      headers: { "content-type": "text/plain" },
+      body: JSON.stringify(decision(pause))
+    }));
+    expect(wrongType.status).toBe(400);
+    expect(await wrongType.json()).toMatchObject({ code: "invalid" });
+
+    const oversized = await handleClientApprovalDecision(session, post(decision(pause, { reason: "x".repeat(40_000) })));
+    expect(oversized.status).toBe(413);
+    expect(await oversized.json()).toMatchObject({ ok: false, code: "invalid" });
   });
 });

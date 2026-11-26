@@ -734,6 +734,9 @@ export const createDockerSandboxEnvironment = (options: DockerSandboxOptions): D
         assertOpen();
         await touch();
         const absolute = resolveWorkspacePath(workspaceRoot, filePath);
+        if (absolute === workspaceRoot) {
+          throw new SandboxError("PATH_INVALID", "Sandbox file path must point to a file inside the workspace.");
+        }
         await assertResolvedWorkspacePath(docker, lease.containerId, workspaceRoot, absolute);
         const archived = await docker.getArchive(lease.containerId, absolute, limits.maxFileBytes + 8_192);
         if (archived.stat.linkTarget) {
@@ -751,6 +754,9 @@ export const createDockerSandboxEnvironment = (options: DockerSandboxOptions): D
         if (access !== "read-write") throw new SandboxError("READ_ONLY", "Sandbox workspace is read-only.");
         await touch();
         const absolute = resolveWorkspacePath(workspaceRoot, filePath);
+        if (absolute === workspaceRoot) {
+          throw new SandboxError("PATH_INVALID", "Sandbox file path must point to a file inside the workspace.");
+        }
         await assertResolvedWorkspacePath(docker, lease.containerId, workspaceRoot, absolute);
         const bytes = await boundedBytes(typeof contents === "string" ? encoder.encode(contents) : contents, limits.maxFileBytes, filePath);
         const relative = absolute.slice(workspaceRoot.length + 1);

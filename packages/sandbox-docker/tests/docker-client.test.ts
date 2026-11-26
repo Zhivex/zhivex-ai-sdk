@@ -179,6 +179,10 @@ describe("node docker client", () => {
       const archived = await docker.getArchive("c", "/workspace/note.txt");
       expect(archived.stat.name).toBe("note.txt");
       expect(unpackTar(archived.tar).find(entry => entry.path === "note.txt")?.type).toBe("file");
+      const dashArchived = await docker.getArchive("c", "/workspace/-flag.txt");
+      expect(dashArchived.stat.name).toBe("-flag.txt");
+      const dashCmd = [...commands.values()].find(command => command[0] === "/bin/tar" && command.includes("-flag.txt"));
+      expect(dashCmd).toEqual(["/bin/tar", "-c", "-C", "/workspace", "--", "-flag.txt"]);
       await expect(docker.getArchive("c", "/missing")).rejects.toThrow(/not found/i);
       await expect(docker.putArchive("c", "/etc", new Uint8Array([1]))).rejects.toThrow(/not-json/);
       expect((await docker.commitContainer("c", "zhivex-sandbox", "snap")).Id).toBe("sha256:abc");

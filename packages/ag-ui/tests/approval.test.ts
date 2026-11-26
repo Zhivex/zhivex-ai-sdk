@@ -266,4 +266,22 @@ describe("createClientApprovalSession", () => {
     expect(resumed.state.scope).toEqual(scope);
     expect(runtime.effects()).toBe(1);
   });
+
+  it("evicts oldest pending approvals when maxPending capacity is reached", async () => {
+    const runtime = createDeploy([toolTurn, toolTurn, toolTurn, doneTurn, doneTurn]);
+    const session = createClientApprovalSession({
+      controlPlane: runtime.controlPlane,
+      now: () => 1_000,
+      maxPending: 2
+    });
+    const r1 = await runtime.controlPlane.run({ prompt: "deploy" });
+    const r2 = await runtime.controlPlane.run({ prompt: "deploy" });
+    const r3 = await runtime.controlPlane.run({ prompt: "deploy" });
+    const p1 = session.publish(r1.state, { expiresAt: 50_000 })[0]!;
+    const p2 = session.publish(r2.state, { expiresAt: 50_000 })[0]!;
+    const p3 = session.publish(r3.state, { expiresAt: 50_000 })[0]!;
+    await expect(session.decide(decisionOf(p1), { now: 1_000 })).rejects.toMatchObject({ code: "stale" });
+    await expect(session.decide(decisionOf(p2), { now: 1_000 })).resolves.toBeDefined();
+    await expect(session.decide(decisionOf(p3), { now: 1_000 })).resolves.toBeDefined();
+  });
 });

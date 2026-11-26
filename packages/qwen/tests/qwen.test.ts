@@ -2346,6 +2346,28 @@ describe("qwen adapter", () => {
     expect(fetchMock.mock.calls[4]?.[1]?.headers).toMatchObject({ "X-DashScope-Async": "enable" });
   });
 
+  it.each(["transcription", "speech"])("limits the error body on each Qwen %s retry", async (operation) => {
+    fetchMock.mockImplementation(async () => new Response("x".repeat(10_000), { status: 503 }));
+    const provider = createQwen({
+      apiKey: "test",
+      fetch: fetchMock as typeof fetch,
+      responseLimits: { errorBodyBytes: 32 }
+    });
+    const retries = { maxRetries: 1, retryBackoffMs: 0 };
+    const request = operation === "transcription"
+      ? provider.transcriptionModel!("qwen3-asr-flash").transcribe({
+          audio: { data: new Uint8Array([1]), mediaType: "audio/wav" },
+          ...retries
+        })
+      : provider.speechModel!("qwen3-tts-flash").generateSpeech({ input: "hello", ...retries });
+
+    await expect(request).rejects.toMatchObject({
+      status: 503,
+      responseBody: `${"x".repeat(32)}\n...[truncated at 32 bytes]`
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("rejects custom voice objects", async () => {
     const provider = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch });
     await expect(provider.speechModel!("qwen3-tts-flash").generateSpeech({
@@ -2926,5 +2948,25 @@ describe("qwen adapter", () => {
     expect(sent.some((payload) => payload.type === "session.close")).toBe(false);
     expect(rerank.results[0]).toMatchObject({ index: 0, document: "Zhivex SDK", relevanceScore: 0.9 });
     expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/services/rerank/text-rerank/text-rerank");
+  });
+
+  it("retries retryable HTTP statuses on Qwen files and rerank endpoints", async () => {
+    fetchMock
+      .mockResolvedValueOnce(new Response("rate limited", { status: 429 }))
+      .mockResolvedValueOnce(Response.json({ id: "file_1", filename: "doc.txt" }))
+      .mockResolvedValueOnce(new Response("unavailable", { status: 503 }))
+      .mockResolvedValueOnce(Response.json({ results: [{ index: 0, relevance_score: 0.95 }] }));
+
+    const provider = createQwen({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const fetched = await provider.files.get({ name: "file_1", maxRetries: 1, retryBackoffMs: 0 });
+    expect(fetched.name).toBe("file_1");
+    const reranked = await provider.rerankModel("gte-rerank-v2").rerank({
+      query: "sdk",
+      documents: ["Zhivex SDK"],
+      maxRetries: 1,
+      retryBackoffMs: 0
+    });
+    expect(reranked.results[0]?.relevanceScore).toBe(0.95);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 });

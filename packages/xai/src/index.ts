@@ -10,7 +10,8 @@ import {
   normalizeMessages,
   readErrorBodyWithLimit,
   readJsonWithLimit,
-  withRetry,
+  withManualRedirect,
+  withResponseRetry,
   withTimeoutSignal,
   type CallableProviderAdapter,
   type FileDeleteInput,
@@ -490,7 +491,6 @@ class XAIFilesClient implements FilesClient<XAIFileOptions> {
   ) {}
 
   async upload(input: FileUploadInput<XAIFileOptions>): Promise<UploadedFile> {
-    const { signal, cleanup } = withTimeoutSignal(input);
     const form = new FormData();
     const options = input.providerOptions ?? {};
     if (
@@ -511,8 +511,9 @@ class XAIFilesClient implements FilesClient<XAIFileOptions> {
     const filename = input.filename ?? input.displayName ?? input.name ?? "file";
     form.set("file", blobFromData(input.data, input.mediaType), filename);
 
+    const { signal, cleanup } = withTimeoutSignal(input);
     try {
-      const response = await withRetry(
+      const response = await withResponseRetry(
         () =>
           this.fetcher(`${this.baseURL}/files`, {
             method: "POST",
@@ -521,7 +522,8 @@ class XAIFilesClient implements FilesClient<XAIFileOptions> {
             signal,
             body: form
           }),
-        input
+        { ...input, abortSignal: signal },
+        "xAI"
       );
       return normalizeUploadedFile(await parseJson(response));
     } finally {
@@ -532,14 +534,15 @@ class XAIFilesClient implements FilesClient<XAIFileOptions> {
   async get(input: FileGetInput<XAIFileOptions>): Promise<UploadedFile> {
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
-      const response = await withRetry(
+      const response = await withResponseRetry(
         () =>
           this.fetcher(`${this.baseURL}/files/${encodeXAIResourceId(input.name)}`, {
             method: "GET",
             headers: jsonHeaders(this.apiKey),
             signal
           }),
-        input
+        { ...input, abortSignal: signal },
+        "xAI"
       );
       return normalizeUploadedFile(await parseJson(response));
     } finally {
@@ -551,7 +554,7 @@ class XAIFilesClient implements FilesClient<XAIFileOptions> {
     const { signal, cleanup } = withTimeoutSignal(input);
     const options = input.providerOptions ?? {};
     try {
-      const response = await withRetry(
+      const response = await withResponseRetry(
         () =>
           this.fetcher(
             appendQuery(`${this.baseURL}/files`, {
@@ -563,7 +566,8 @@ class XAIFilesClient implements FilesClient<XAIFileOptions> {
             }),
             { method: "GET", headers: jsonHeaders(this.apiKey), signal }
           ),
-        input
+        { ...input, abortSignal: signal },
+        "xAI"
       );
       const json = await parseJson(response);
       return {
@@ -579,14 +583,15 @@ class XAIFilesClient implements FilesClient<XAIFileOptions> {
   async delete(input: FileDeleteInput<XAIFileOptions>) {
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
-      const response = await withRetry(
+      const response = await withResponseRetry(
         () =>
           this.fetcher(`${this.baseURL}/files/${encodeXAIResourceId(input.name)}`, {
             method: "DELETE",
             headers: jsonHeaders(this.apiKey),
             signal
           }),
-        input
+        { ...input, abortSignal: signal },
+        "xAI"
       );
       return { name: input.name, rawResponse: await parseJson(response) };
     } finally {
@@ -683,6 +688,7 @@ export const createXAI = (
 
   const baseURL = resolveXAIBaseURL(options);
   const fetcher = options.fetch ?? globalThis.fetch;
+  const protectedFetcher = withManualRedirect(fetcher);
   const defaultHeaders = Object.fromEntries(
     Object.entries(options.headers ?? {}).filter(
       ([key]) => !["authorization", "content-type", "content-length", "host", "connection", "transfer-encoding"].includes(key.toLowerCase())
@@ -694,13 +700,13 @@ export const createXAI = (
       // This delegate implements the wire protocol; xAI owns model feature policy.
       modelCapabilities: { [modelId]: modelCapabilities(modelId) },
     }).languageModel(modelId), defaultHeaders, baseURL);
-  const media = createXAIMedia({ apiKey, baseURL, fetcher, responseLimits: options.responseLimits });
+  const media = createXAIMedia({ apiKey, baseURL, fetcher: protectedFetcher, responseLimits: options.responseLimits });
 
   return createProviderAdapter({
     name: "xai",
     languageModel,
     groundedLanguageModel: (modelId) => new XAIGroundedLanguageModel(modelId, languageModel(modelId)),
-    files: new XAIFilesClient(apiKey, baseURL, fetcher),
+    files: new XAIFilesClient(apiKey, baseURL, protectedFetcher),
     rawFetch: fetcher,
     ...media
   });

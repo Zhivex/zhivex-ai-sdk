@@ -2573,4 +2573,65 @@ describe("gemini adapter", () => {
       )
     ).rejects.toBeInstanceOf(DOMException);
   });
+
+  it("retries retryable HTTP statuses across Gemini clients and cancels resumable upload start body", async () => {
+    fetchMock
+      .mockResolvedValueOnce(new Response("rate limited", { status: 429 }))
+      .mockResolvedValueOnce(Response.json({ embedding: { values: [0.1, 0.2] } }));
+
+    const provider = createGemini({ apiKey: "test", fetch: fetchMock as typeof fetch });
+    const embedded = await embedMany({
+      model: provider.embeddingModel("gemini-embedding-001"),
+      value: ["hello"],
+      maxRetries: 1,
+      retryBackoffMs: 0
+    });
+    expect(embedded.embeddings).toEqual([[0.1, 0.2]]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    let startBodyCancelled = false;
+    const startStream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("ignored"));
+      },
+      cancel() {
+        startBodyCancelled = true;
+      }
+    });
+    fetchMock
+      .mockResolvedValueOnce(
+        new Response(startStream, {
+          status: 200,
+          headers: { "x-goog-upload-url": "https://generativelanguage.googleapis.com/upload/session-1" }
+        })
+      )
+      .mockResolvedValueOnce(new Response("try again", { status: 503 }))
+      .mockResolvedValueOnce(Response.json({ file: { name: "files/1", uri: "https://example.test/1" } }));
+
+    const uploaded = await provider.files.upload({
+      data: new TextEncoder().encode("hello"),
+      mediaType: "text/plain",
+      maxRetries: 1,
+      retryBackoffMs: 0
+    });
+    expect(uploaded.name).toBe("files/1");
+    expect(startBodyCancelled).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(5);
+
+    const clearSpy = vi.spyOn(globalThis, "clearTimeout");
+    try {
+      fetchMock.mockResolvedValueOnce(new Response("bad request", { status: 400 }));
+      await expect(
+        streamSpeech({
+          model: provider.speechModel("gemini-2.5-flash-preview-tts"),
+          input: "hello",
+          timeoutMs: 10_000,
+          maxRetries: 0
+        })
+      ).rejects.toThrow("400");
+      expect(clearSpy).toHaveBeenCalled();
+    } finally {
+      clearSpy.mockRestore();
+    }
+  });
 });

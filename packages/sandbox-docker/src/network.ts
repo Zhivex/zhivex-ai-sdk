@@ -216,7 +216,10 @@ export const startAllowlistProxy = async (options: {
       let counted = false;
       let tunnelTimer: ReturnType<typeof setTimeout> | undefined;
       const closeBoth = () => {
-        if (tunnelTimer) clearTimeout(tunnelTimer);
+        if (tunnelTimer) {
+          clearTimeout(tunnelTimer);
+          tunnelTimer = undefined;
+        }
         if (!socket.destroyed) socket.destroy();
         if (upstream && !upstream.destroyed) upstream.destroy();
       };
@@ -260,15 +263,18 @@ export const startAllowlistProxy = async (options: {
         if (!options.policy.allowPrivateNetworks && isPrivateAddress(chosen)) {
           throw new SandboxError("NETWORK_DENIED", `Allowlist host ${target.host} resolves to a private address.`);
         }
+        if (head.length && transferred + head.length > quotas.maxBytes) {
+          throw new SandboxError("NETWORK_DENIED", "Allowlist proxy byte quota is exhausted.");
+        }
         inFlight -= 1;
         counted = false;
         socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
         if (head.length) {
           transferred += head.length;
-          if (transferred > quotas.maxBytes) throw new SandboxError("NETWORK_DENIED", "Allowlist proxy byte quota is exhausted.");
           upstream.write(head);
         }
         tunnelTimer = setTimeout(closeBoth, quotas.tunnelMs);
+        tunnelTimer.unref?.();
         const relay = (from: Socket, to: Socket) => {
           from.on("data", (chunk: Buffer) => {
             transferred += chunk.length;
@@ -285,8 +291,8 @@ export const startAllowlistProxy = async (options: {
         upstream.on("timeout", closeBoth);
         relay(socket, upstream);
         relay(upstream, socket);
-        socket.on("close", () => upstream?.destroy());
-        upstream.on("close", () => socket.destroy());
+        socket.on("close", closeBoth);
+        upstream.on("close", closeBoth);
         socket.on("error", closeBoth);
         upstream.on("error", closeBoth);
       } catch {

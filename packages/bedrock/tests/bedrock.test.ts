@@ -1204,6 +1204,14 @@ describe("bedrock adapter", () => {
     await expect(client.callTool({ name: "missing" })).rejects.toThrow(
       "Bedrock AgentCore MCP tools/call failed: unknown method."
     );
+
+    fetchMock.mockResolvedValueOnce(
+      new Response("<html><body>502 Bad Gateway</body></html>", {
+        status: 502,
+        headers: { "content-type": "text/html" }
+      })
+    );
+    await expect(client.listTools()).rejects.toThrow("Bedrock AgentCore MCP request failed with status 502.");
   });
 
   it("runs AgentCore MCP ToolSet through the shared agent loop on Bedrock Converse", async () => {

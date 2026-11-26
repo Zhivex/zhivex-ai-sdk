@@ -4,6 +4,7 @@ import { toJSONSchema } from "zod";
 import {
   imageInputToDataUrl,
   ConfigurationError,
+  ParseError,
   ProviderHTTPError,
   UnsupportedFeatureError,
   assertTrustedEndpoint,
@@ -731,9 +732,18 @@ const normalizeResponsesFinishReason = (status: string | undefined, hasToolCalls
   return normalizeFinishReason(status);
 };
 
+const parseMetaJson = (raw: string, context: string): any => {
+  try {
+    return JSON.parse(raw);
+  } catch (error) {
+    throw new ParseError(`Meta ${context} contained invalid JSON.`, { cause: error });
+  }
+};
+
 const streamResponses = async function* (response: Response): AsyncGenerator<StreamEvent, void, undefined> {
   const toolBuffers = new Map<string, { callId: string; name: string; args: string; emitted: boolean }>();
   let sawToolCalls = false;
+  let sawTerminal = false;
 
   const remember = (key: string, update: (current: { callId: string; name: string; args: string; emitted: boolean }) => void) => {
     if (key.length > 1024 || (!toolBuffers.has(key) && toolBuffers.size >= MAX_META_TOOL_CALLS)) {
@@ -754,7 +764,7 @@ const streamResponses = async function* (response: Response): AsyncGenerator<Str
 
     let input: ReturnType<typeof JSON.parse>;
     try {
-      input = JSON.parse(toolCall.args || "{}");
+      input = parseMetaJson(toolCall.args || "{}", "tool call arguments");
     } finally {
       toolCall.args = "";
     }
@@ -773,11 +783,24 @@ const streamResponses = async function* (response: Response): AsyncGenerator<Str
   try {
   for await (const event of streamSSE(response)) {
     if (event.data === "[DONE]") {
+      if (!sawTerminal) {
+        throw new ParseError("Meta streaming response ended without a terminal event.");
+      }
       return;
     }
 
-    const json = JSON.parse(event.data);
+    const json = parseMetaJson(event.data, "streaming event");
     const type = json.type as string | undefined;
+
+    if (type === "error") {
+      const errorObj = json.error && typeof json.error === "object" ? json.error : json;
+      const status = typeof errorObj?.status === "number" && Number.isInteger(errorObj.status) ? errorObj.status : 500;
+      const message =
+        typeof errorObj?.message === "string" && errorObj.message
+          ? `Meta streaming error: ${errorObj.message}`
+          : "Meta streaming request failed.";
+      throw new ProviderHTTPError(message, status, { responseBody: event.data });
+    }
 
     if (type === "response.output_text.delta" && typeof json.delta === "string") {
       yield { type: "text-delta", textDelta: json.delta } satisfies StreamEvent;
@@ -834,6 +857,7 @@ const streamResponses = async function* (response: Response): AsyncGenerator<Str
     }
 
     if (type === "response.completed" || type === "response.failed" || type === "response.incomplete") {
+      sawTerminal = true;
       const responseData = json.response ?? {};
       if (typeof responseData.id === "string") {
         yield {
@@ -849,6 +873,9 @@ const streamResponses = async function* (response: Response): AsyncGenerator<Str
         usage: responseData.usage ? mapResponsesUsage(responseData.usage) : undefined
       } satisfies StreamEvent;
     }
+  }
+  if (!sawTerminal) {
+    throw new ParseError("Meta streaming response ended without a terminal event.");
   }
   } finally {
     await response.body?.cancel().catch(() => undefined);
@@ -1047,7 +1074,7 @@ class MetaLanguageModel implements LanguageModel<MetaLanguageModelOptions> {
       },
       input
     ), {
-      readPayload: (data) => JSON.parse(data),
+      readPayload: (data) => parseMetaJson(data, "streaming event"),
       onChunk: (json, toolBuffers, state) => {
         const events: StreamEvent[] = [];
         const choice = json.choices?.[0];
@@ -1080,7 +1107,7 @@ class MetaLanguageModel implements LanguageModel<MetaLanguageModelOptions> {
               toolCall: {
                 id: toolCall.id,
                 name: toolCall.name,
-                input: JSON.parse(toolCall.args || "{}")
+                input: parseMetaJson(toolCall.args || "{}", "tool call arguments")
               }
             });
           }
@@ -1186,7 +1213,6 @@ class MetaFilesClient implements FilesClient<MetaFileOptions> {
   ) {}
 
   async upload(input: FileUploadInput<MetaFileOptions>): Promise<UploadedFile> {
-    const { signal, cleanup } = withTimeoutSignal(input);
     const form = new FormData();
     const filename = input.filename ?? input.displayName ?? input.name ?? "file";
     form.set("file", blobFromData(input.data, input.mediaType), filename);
@@ -1196,6 +1222,7 @@ class MetaFilesClient implements FilesClient<MetaFileOptions> {
         form.set(key, typeof value === "string" ? value : JSON.stringify(value));
       }
     }
+    const { signal, cleanup } = withTimeoutSignal(input);
 
     try {
       const response = await fetchMetaWithRetry(

@@ -1,7 +1,12 @@
-const concat = (left: Uint8Array<ArrayBufferLike>, right: Uint8Array<ArrayBufferLike>) => {
-  const out = new Uint8Array(left.length + right.length);
-  out.set(left);
-  out.set(right, left.length);
+const concatMany = (chunks: readonly Uint8Array<ArrayBufferLike>[], totalLength: number): Uint8Array => {
+  if (totalLength === 0) return new Uint8Array();
+  if (chunks.length === 1) return new Uint8Array(chunks[0]!);
+  const out = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
   return out;
 };
 
@@ -24,43 +29,69 @@ export const readMultiplexedStream = async (
   const stderr: Uint8Array[] = [];
   let stdoutLen = 0;
   let stderrLen = 0;
-  let pending = new Uint8Array();
   let truncated = false;
 
-  const append = (target: Uint8Array[], used: number, payload: Uint8Array) => {
-    const room = maxBytes - used;
-    if (room <= 0) {
-      truncated = true;
-      return 0;
+  const header = new Uint8Array(8);
+  const headerView = new DataView(header.buffer);
+  let headerLen = 0;
+  let frameType = 0;
+  let frameRemaining = 0;
+
+  const pushPayload = (type: number, slice: Uint8Array) => {
+    if (type === 1) {
+      const room = maxBytes - stdoutLen;
+      if (room <= 0) {
+        truncated = true;
+        return;
+      }
+      const take = slice.byteLength > room ? slice.subarray(0, room) : slice;
+      if (take.byteLength < slice.byteLength) truncated = true;
+      if (take.byteLength > 0) {
+        stdout.push(take.slice());
+        stdoutLen += take.byteLength;
+      }
+    } else if (type === 2) {
+      const room = maxBytes - stderrLen;
+      if (room <= 0) {
+        truncated = true;
+        return;
+      }
+      const take = slice.byteLength > room ? slice.subarray(0, room) : slice;
+      if (take.byteLength < slice.byteLength) truncated = true;
+      if (take.byteLength > 0) {
+        stderr.push(take.slice());
+        stderrLen += take.byteLength;
+      }
     }
-    const slice = payload.length > room ? payload.subarray(0, room) : payload;
-    if (slice.length < payload.length) truncated = true;
-    if (slice.length) target.push(slice);
-    return slice.length;
   };
 
   for await (const chunk of chunks) {
-    pending = concat(pending, chunk);
-    while (pending.length >= 8) {
-      const size = new DataView(pending.buffer, pending.byteOffset, pending.byteLength).getUint32(4);
-      if (!Number.isSafeInteger(size) || pending.length < 8 + size) break;
-      const type = pending[0];
-      const payload = pending.subarray(8, 8 + size);
-      pending = pending.subarray(8 + size);
-      if (type === 1) {
-        if (stdoutLen >= maxBytes) truncated = true;
-        else stdoutLen += append(stdout, stdoutLen, payload);
-      } else if (type === 2) {
-        if (stderrLen >= maxBytes) truncated = true;
-        else stderrLen += append(stderr, stderrLen, payload);
+    let offset = 0;
+    while (offset < chunk.byteLength) {
+      if (frameRemaining === 0) {
+        const needed = 8 - headerLen;
+        const copyLen = Math.min(needed, chunk.byteLength - offset);
+        header.set(chunk.subarray(offset, offset + copyLen), headerLen);
+        headerLen += copyLen;
+        offset += copyLen;
+        if (headerLen < 8) break;
+        frameType = header[0] ?? 0;
+        frameRemaining = headerView.getUint32(4);
+        headerLen = 0;
+        continue;
       }
+
+      const take = Math.min(frameRemaining, chunk.byteLength - offset);
+      pushPayload(frameType, chunk.subarray(offset, offset + take));
+      frameRemaining -= take;
+      offset += take;
     }
     if (stdoutLen >= maxBytes && stderrLen >= maxBytes) break;
   }
 
   return {
-    stdout: stdout.reduce(concat, new Uint8Array()),
-    stderr: stderr.reduce(concat, new Uint8Array()),
+    stdout: concatMany(stdout, stdoutLen),
+    stderr: concatMany(stderr, stderrLen),
     truncated
   };
 };

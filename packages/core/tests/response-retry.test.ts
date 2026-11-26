@@ -21,9 +21,10 @@ it.each(["2", "Wed, 01 Jan 2025 00:00:02 GMT"])("honors Retry-After %s and prese
 
 it("does not retry permanent HTTP failures and retains bounded diagnostics", async () => {
   const operation = vi.fn(async () => new Response("invalid request", { status: 400 }));
-  const failure = await withResponseRetry(operation, { maxRetries: 2 }, "Test").catch(error => error);
+  const failure = await withResponseRetry(operation, { maxRetries: 2 }, "Test", 7).catch(error => error);
   expect(failure).toBeInstanceOf(ProviderHTTPError);
   expect(failure.status).toBe(400);
+  expect(failure.responseBody).toBe("invalid\n...[truncated at 7 bytes]");
   expect(operation).toHaveBeenCalledTimes(1);
 });
 

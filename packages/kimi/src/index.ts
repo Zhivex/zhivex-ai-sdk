@@ -19,7 +19,6 @@ import {
   readErrorBodyWithLimit,
   readJsonWithLimit,
   tool,
-  withRetry,
   withResponseRetry,
   withOpenAICompatibleAttempt,
   withTimeoutSignal,
@@ -250,7 +249,7 @@ const callKimiFormula = async (
   const { apiKey, baseURL, fetcher } = resolveFormulaConfig(requestOptions);
   const { signal, cleanup } = withTimeoutSignal(requestOptions);
   try {
-    const response = await withRetry(
+    const response = await withResponseRetry(
       () =>
         fetcher(`${baseURL}/formulas/${encodeKimiFormulaUri(formulaUri)}/fibers`, {
           method: "POST",
@@ -265,7 +264,8 @@ const callKimiFormula = async (
             arguments: JSON.stringify(input ?? {})
           })
         }),
-      requestOptions
+      { ...requestOptions, abortSignal: signal },
+      "Kimi"
     );
     const json = await parseJson(response);
     return serializeJsonValue(json);
@@ -981,7 +981,7 @@ export const kimiFormulaTools = async (options: KimiFormulaToolsOptions): Promis
   const { signal, cleanup } = withTimeoutSignal(requestOptions);
   try {
     for (const formulaUri of options.formulas) {
-      const response = await withRetry(
+      const response = await withResponseRetry(
         () =>
           fetcher(`${baseURL}/formulas/${encodeKimiFormulaUri(formulaUri)}/tools`, {
             redirect: "error",
@@ -990,7 +990,8 @@ export const kimiFormulaTools = async (options: KimiFormulaToolsOptions): Promis
             },
             signal
           }),
-        requestOptions
+        { ...requestOptions, abortSignal: signal },
+        "Kimi"
       );
       const json = await parseJson(response);
       for (const definition of json.tools ?? []) {

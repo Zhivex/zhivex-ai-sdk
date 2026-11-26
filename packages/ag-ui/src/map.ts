@@ -43,7 +43,29 @@ interface PublicState {
   runs: Record<string, PublicRun>;
 }
 
+const MAX_TRACKED_RUNS = 200;
+
 const jsonClone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
+
+const mergeCappedRuns = (
+  existing: Record<string, PublicRun>,
+  nextRun: PublicRun,
+  activeRunId: string
+): Record<string, PublicRun> => {
+  const merged: Record<string, PublicRun> = { ...existing, [nextRun.runId]: nextRun };
+  const keys = Object.keys(merged);
+  if (keys.length <= MAX_TRACKED_RUNS) return merged;
+  const result: Record<string, PublicRun> = {};
+  if (merged[activeRunId]) {
+    result[activeRunId] = merged[activeRunId]!;
+  }
+  const remainingSlots = MAX_TRACKED_RUNS - Object.keys(result).length;
+  const recentKeys = keys.filter((key) => key !== activeRunId).slice(-remainingSlots);
+  for (const key of recentKeys) {
+    result[key] = merged[key]!;
+  }
+  return result;
+};
 
 const publicRunFromView = (run: AgentRunView): PublicRun => ({
   runId: run.runId,
@@ -218,9 +240,11 @@ export async function* toAgUiEvents(
     ...(options.parentRunId ? { parentRunId: options.parentRunId } : {})
   };
 
+  try {
   for await (const event of source) {
     if (event.type === "agent-run-start" || event.type === "agent-approval-resolved") {
       if (event.type === "agent-approval-resolved") {
+        interrupts.delete(`${event.approval.provider}:${event.approval.approvalRequestId}`);
         yield {
           ...stamp(),
           type: "CUSTOM",
@@ -237,7 +261,7 @@ export async function* toAgUiEvents(
 
     if (event.type === "agent-run-update") {
       const run = publicRunFromView(event.run);
-      const runs = { ...state.runs, [run.runId]: run };
+      const runs = mergeCappedRuns(state.runs, run, options.runId);
       const active = run.runId === options.runId || state.run === null ? run : state.run;
       yield* emitState({ run: active, runs });
       continue;
@@ -364,10 +388,17 @@ export async function* toAgUiEvents(
       const run = publicRunFromState(event.state);
       yield* emitState({
         run: run.runId === options.runId || state.run === null ? run : state.run,
-        runs: { ...state.runs, [run.runId]: run }
+        runs: mergeCappedRuns(state.runs, run, options.runId)
       });
       usage = toUsage(event.state.usage, event.state.provider, event.state.modelId) ?? usage;
-      for (const approval of event.state.pendingApprovals) rememberApproval(approval);
+      if (event.status === "waiting_approval" || event.status === "suspended") {
+        if (event.state.pendingApprovals.length > 0) {
+          interrupts.clear();
+          for (const approval of event.state.pendingApprovals) rememberApproval(approval);
+        }
+      } else {
+        interrupts.clear();
+      }
       terminal = terminalEvent(event.status, options, interrupts, usage, errorMessage, stamp());
       yield* finishRun();
       continue;
@@ -375,6 +406,9 @@ export async function* toAgUiEvents(
 
     const unhandled: never = event;
     return unhandled;
+  }
+  } catch (error) {
+    errorMessage = error instanceof Error && error.message ? error.message : String(error || "Agent run failed.");
   }
 
   yield* finishRun();

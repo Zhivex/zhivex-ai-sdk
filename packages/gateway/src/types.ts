@@ -277,7 +277,13 @@ export interface GatewayConfig {
   admission?: import("./admission.js").GatewayAdmissionController;
   /** Maximum wait for asynchronous settlement/release before reporting failure. */
   resourceTimeoutMs?: number;
-  budget?: { store: import("./budget.js").GatewayBudgetStore; currency: string; reserveAmount: number };
+  budget?: {
+    store: import("./budget.js").GatewayBudgetStore;
+    currency: string;
+    reserveAmount: number;
+    /** Cooldown after a failed settlement/cancel before retrying reservations on that scope (default 60000ms, or false to keep blocked). */
+    settlementFailureCooldownMs?: number | false;
+  };
   cache?: { store: import("@zhivex-ai/core").GenerateCache; scope: string; timeoutMs?: number };
   /** Legacy preserves detached callbacks. Background bounds capacity; await waits per attempt. */
   observerMode?: "legacy" | "await" | "background";

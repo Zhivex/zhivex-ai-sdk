@@ -52,6 +52,8 @@ describe("docker sandbox environment", () => {
     expect(await session.list(".")).toEqual(["README.md", "src"]);
     expect(text(await session.readFile("src/note.txt"))).toBe("note");
     await expect(session.readFile("../etc/passwd")).rejects.toThrow(/cannot contain '\.\.'/);
+    await expect(session.readFile(".")).rejects.toThrow(/inside the workspace/);
+    await expect(session.writeFile(".", "nope")).rejects.toThrow(/inside the workspace/);
     await expect(session.exec(["/bin/sh", "-c", "echo owned"])).rejects.toThrow(/not on the sandbox allowlist/);
     const capped = await session.exec(["/bin/echo", "abcdef"]);
     expect(capped.stdout).toBe("abcd");

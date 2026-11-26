@@ -1503,8 +1503,8 @@ class AzureOpenAILanguageModel implements LanguageModel<AzureOpenAILanguageModel
   }
 
   async generate(input: ModelGenerateInput<AzureOpenAILanguageModelOptions>): Promise<GenerateResult> {
-    const { signal, cleanup } = withTimeoutSignal(input);
     const resolvedModel = this.resolvedModel(input);
+    const { signal, cleanup } = withTimeoutSignal(input);
     try {
       if (useAzureResponses(resolvedModel, input)) {
         assertResponsesToolsSupported(resolvedModel, input.tools);
@@ -1592,8 +1592,8 @@ class AzureOpenAILanguageModel implements LanguageModel<AzureOpenAILanguageModel
   }
 
   async stream(input: ModelGenerateInput<AzureOpenAILanguageModelOptions>): Promise<AsyncIterable<StreamEvent>> {
-    const { signal, cleanup } = withTimeoutSignal(input);
     const resolvedModel = this.resolvedModel(input);
+    const { signal, cleanup } = withTimeoutSignal(input);
     try {
       if (useAzureResponses(resolvedModel, input)) {
         assertResponsesToolsSupported(resolvedModel, input.tools);
@@ -1742,7 +1742,6 @@ class AzureOpenAITranscriptionModel implements TranscriptionModel {
     retryBackoffMs?: number;
     providerOptions?: Record<string, unknown>;
   }): Promise<TranscriptionResult> {
-    const { signal, cleanup, abort } = withTimeoutSignal(input);
     const form = new FormData();
     for (const [key, value] of Object.entries(input.providerOptions ?? {})) {
       if (["model", "file", "prompt", "language"].includes(key)) {
@@ -1758,6 +1757,7 @@ class AzureOpenAITranscriptionModel implements TranscriptionModel {
     if (input.language) {
       form.set("language", input.language);
     }
+    const { signal, cleanup, abort } = withTimeoutSignal(input);
 
     try {
       const response = await sendAzure(
@@ -1769,7 +1769,7 @@ class AzureOpenAITranscriptionModel implements TranscriptionModel {
             signal,
             body: form
           }),
-        input,
+        { ...input, abortSignal: signal },
         this.auth.maxRetries
       );
 

@@ -7,6 +7,7 @@ import {
   readErrorBodyWithLimit,
   readJsonWithLimit,
   resolveAudioResponseLimits,
+  withResponseRetry,
   withRetry,
   withTimeoutSignal,
   type AudioInput,
@@ -291,7 +292,7 @@ export class XAIImageGenerationModel implements ImageGenerationModel<XAIImageGen
 
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
-      const response = await withRetry(
+      const response = await withResponseRetry(
         () =>
           this.fetcher(`${this.baseURL}/${endpoint}`, {
             method: "POST",
@@ -300,7 +301,8 @@ export class XAIImageGenerationModel implements ImageGenerationModel<XAIImageGen
             signal,
             body: JSON.stringify(body)
           }),
-        input
+        { ...input, abortSignal: signal },
+        "xAI"
       );
       let json = await readJson(response, endpoint, 32 * 1024 * 1024, 64 * 1024);
       if (!Array.isArray(json.data) && typeof json.request_id === "string") {
@@ -340,7 +342,7 @@ export class XAIImageGenerationModel implements ImageGenerationModel<XAIImageGen
         throw new ProviderHTTPError(`xAI image generation timed out after ${timeoutMs}ms.`, 408);
       }
       await sleep(pollIntervalMs, signal);
-      const response = await withRetry(
+      const response = await withResponseRetry(
         () =>
           this.fetcher(`${this.baseURL}/images/${encodeURIComponent(requestId)}`, {
             method: "GET",
@@ -348,7 +350,8 @@ export class XAIImageGenerationModel implements ImageGenerationModel<XAIImageGen
             redirect: "error",
             signal
           }),
-        input
+        { ...input, abortSignal: signal },
+        "xAI"
       );
       json = await readJson(response, "images/result", 32 * 1024 * 1024, 64 * 1024);
     }
@@ -416,7 +419,7 @@ export class XAIVideoGenerationModel implements VideoGenerationModel<XAIVideoGen
     const { signal, cleanup } = withTimeoutSignal({ ...input, timeoutMs });
     const started = Date.now();
     try {
-      const response = await withRetry(
+      const response = await withResponseRetry(
         () =>
           this.fetcher(`${this.baseURL}/videos/generations`, {
             method: "POST",
@@ -425,7 +428,8 @@ export class XAIVideoGenerationModel implements VideoGenerationModel<XAIVideoGen
             signal,
             body: JSON.stringify(body)
           }),
-        { ...input, maxRetries: input.maxRetries ?? 0 }
+        { ...input, maxRetries: input.maxRetries ?? 0, abortSignal: signal },
+        "xAI"
       );
       let json = await readJson(response, "videos/generations", 1024 * 1024, 64 * 1024);
       const requestId = typeof json.request_id === "string" ? json.request_id : undefined;
@@ -439,7 +443,7 @@ export class XAIVideoGenerationModel implements VideoGenerationModel<XAIVideoGen
           throw new ProviderHTTPError(`xAI video generation timed out after ${timeoutMs}ms.`, 408);
         }
         await sleep(input.pollIntervalMs ?? 5_000, signal);
-        const poll = await withRetry(
+        const poll = await withResponseRetry(
           () =>
             this.fetcher(`${this.baseURL}/videos/${encodeURIComponent(requestId)}`, {
               method: "GET",
@@ -447,7 +451,8 @@ export class XAIVideoGenerationModel implements VideoGenerationModel<XAIVideoGen
               redirect: "error",
               signal
             }),
-          input
+          { ...input, abortSignal: signal },
+          "xAI"
         );
         json = await readJson(poll, "videos/result", 1024 * 1024, 64 * 1024);
       }
@@ -499,8 +504,8 @@ export class XAISpeechModel implements SpeechModel<XAISpeechOptions> {
     const { signal, cleanup, abort } = withTimeoutSignal(input);
     try {
       const response = await withRetry(
-        () =>
-          this.fetcher(`${this.baseURL}/tts`, {
+        async () => {
+          const result = await this.fetcher(`${this.baseURL}/tts`, {
             method: "POST",
             headers: jsonHeaders(this.apiKey),
             redirect: "error",
@@ -511,15 +516,17 @@ export class XAISpeechModel implements SpeechModel<XAISpeechOptions> {
               voice_id: input.voice ?? "eve",
               language
             })
-          }),
-        input
+          });
+          if (!result.ok) {
+            const body = await readErrorBodyWithLimit(result, this.responseLimits.errorBodyBytes);
+            throw new ProviderHTTPError(`xAI request failed with status ${result.status}.`, result.status, {
+              responseBody: body
+            });
+          }
+          return result;
+        },
+        { ...input, abortSignal: signal }
       );
-      if (!response.ok) {
-        const body = await readErrorBodyWithLimit(response, this.responseLimits.errorBodyBytes);
-        throw new ProviderHTTPError(`xAI request failed with status ${response.status}.`, response.status, {
-          responseBody: body
-        });
-      }
       const contentType = response.headers.get("content-type") ?? "";
       if (contentType.includes("json") || options.with_timestamps === true) {
         const json = await readJsonWithLimit<any>(response, {
@@ -603,15 +610,23 @@ export class XAITranscriptionModel implements TranscriptionModel<XAITranscriptio
     const { signal, cleanup } = withTimeoutSignal(input);
     try {
       const response = await withRetry(
-        () =>
-          this.fetcher(`${this.baseURL}/stt`, {
+        async () => {
+          const result = await this.fetcher(`${this.baseURL}/stt`, {
             method: "POST",
             headers: { authorization: `Bearer ${this.apiKey}` },
             redirect: "error",
             signal,
             body: form
-          }),
-        input
+          });
+          if (!result.ok) {
+            const body = await readErrorBodyWithLimit(result, this.responseLimits.errorBodyBytes);
+            throw new ProviderHTTPError(`xAI request failed with status ${result.status}.`, result.status, {
+              responseBody: body
+            });
+          }
+          return result;
+        },
+        { ...input, abortSignal: signal }
       );
       const json = await readJson(response, "stt", this.responseLimits.transcriptionBytes, this.responseLimits.errorBodyBytes);
       return { text: typeof json.text === "string" ? json.text : "", rawResponse: json };

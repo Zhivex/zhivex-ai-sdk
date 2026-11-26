@@ -74,6 +74,7 @@ export interface ClientApprovalSession {
 
 const REASON_MAX_CHARS = 1_000;
 const HISTORY_LIMIT = 64;
+const DEFAULT_MAX_PENDING = 1_024;
 
 /** Compares the full strings without Node crypto. Length is not a shortcut. */
 const tokensMatch = (expected: string, actual: string): boolean => {
@@ -138,7 +139,12 @@ const toPause = (
 export const createClientApprovalSession = (options: {
   controlPlane: AgentControlPlane;
   now?: () => number;
+  maxPending?: number;
 }): ClientApprovalSession => {
+  const maxPending = options.maxPending ?? DEFAULT_MAX_PENDING;
+  if (!Number.isSafeInteger(maxPending) || maxPending < 1) {
+    throw new ClientApprovalError("invalid", 'Option "maxPending" must be a positive safe integer.');
+  }
   const current = new Map<string, StoredApproval>();
   const history: StoredApproval[] = [];
   const now = () => options.now?.() ?? Date.now();
@@ -210,6 +216,21 @@ export const createClientApprovalSession = (options: {
           history.push(previous);
           capHistory();
         }
+        if (!current.has(key) && current.size >= maxPending) {
+          prune(now());
+          while (!current.has(key) && current.size >= maxPending) {
+            const oldestKey = current.keys().next().value;
+            if (oldestKey === undefined) break;
+            const evicted = current.get(oldestKey);
+            current.delete(oldestKey);
+            if (evicted && !evicted.consumed) {
+              evicted.superseded = true;
+              evicted.consumed = true;
+              history.push(evicted);
+              capHistory();
+            }
+          }
+        }
         const stored: StoredApproval = {
           queueItem,
           toolCallId: pending?.toolCallId,
@@ -217,6 +238,7 @@ export const createClientApprovalSession = (options: {
           consumed: false,
           superseded: false
         };
+        current.delete(key);
         current.set(key, stored);
         return toPause(queueItem, pending?.toolCallId, includeArguments);
       });

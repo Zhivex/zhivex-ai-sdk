@@ -33,12 +33,13 @@ const retryDelayMs = (response: Response) => {
 export const withResponseRetry = (
   operation: () => Promise<Response>,
   options: RetryOptions = {},
-  provider = "Provider"
+  provider = "Provider",
+  errorBodyBytes?: number
 ): Promise<Response> => withRetry(async () => {
   const response = await operation();
   if (!response.ok) {
     throw new ProviderHTTPError(`${provider} request failed with status ${response.status}.`, response.status, {
-      responseBody: await readErrorBodyWithLimit(response),
+      responseBody: await readErrorBodyWithLimit(response, errorBodyBytes),
       retryAfterMs: retryDelayMs(response)
     });
   }

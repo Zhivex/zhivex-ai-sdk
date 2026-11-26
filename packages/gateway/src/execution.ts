@@ -1,7 +1,7 @@
 import { enforceEgressPolicy } from "@zhivex-ai/core/experimental";
 import { calculateModelCost } from "@zhivex-ai/core/catalog";
 import { createCachedGenerateMiddleware, ProviderToolCallError, type GenerateResult, type LanguageModel, type ModelGenerateInput, type StreamEvent, type TokenUsage } from "@zhivex-ai/core/generation";
-import { type GatewayConfig, type GatewayModelTarget } from "./types.js";
+import { GatewayError, type GatewayConfig, type GatewayModelTarget } from "./types.js";
 import { GatewayBudgetError, type GatewayBudgetReservation } from "./budget.js";
 import type { GatewayAdmissionLease } from "./admission.js";
 import { targetKey } from "./target.js";
@@ -39,19 +39,60 @@ export const createGatewayExecutor = (config: GatewayConfig) => {
       endpoint: target.endpoint
     });
   };
+  const settlementFailureCooldownMs = config.budget?.settlementFailureCooldownMs ?? 60_000;
+  if (
+    settlementFailureCooldownMs !== false &&
+    (!Number.isSafeInteger(settlementFailureCooldownMs) || settlementFailureCooldownMs < 1)
+  ) {
+    throw new GatewayError("Invalid budget settlementFailureCooldownMs.", false);
+  }
+  const MAX_BLOCKED_SCOPES = 10_000;
   const flights = new Map<string, { promise: Promise<GenerateResult>; controller: AbortController; users: number }>();
   let settlementFailures = 0, droppedCacheWrites = 0;
   const cacheWrites = new Set<Promise<void>>();
   const settlements = new Set<Promise<void>>();
-  const safe = (action: () => void | Promise<void>) => {
+  const blockedScopes = new Map<string, number>();
+  const isScopeBlocked = (scope: string): boolean => {
+    const blockedUntil = blockedScopes.get(scope);
+    if (blockedUntil === undefined) return false;
+    if (Date.now() >= blockedUntil) {
+      blockedScopes.delete(scope);
+      return false;
+    }
+    return true;
+  };
+  const recordBlockedScope = (scope: string) => {
+    const now = Date.now();
+    if (blockedScopes.size >= MAX_BLOCKED_SCOPES) {
+      for (const [key, until] of blockedScopes) {
+        if (now >= until) blockedScopes.delete(key);
+      }
+      if (blockedScopes.size >= MAX_BLOCKED_SCOPES) {
+        const oldest = blockedScopes.keys().next().value;
+        if (oldest !== undefined) blockedScopes.delete(oldest);
+      }
+    }
+    blockedScopes.delete(scope);
+    blockedScopes.set(
+      scope,
+      settlementFailureCooldownMs === false ? Number.POSITIVE_INFINITY : now + settlementFailureCooldownMs
+    );
+  };
+  const recordSettlementFailure = (budgetScope?: string) => {
+    settlementFailures++;
+    if (budgetScope) recordBlockedScope(budgetScope);
+  };
+  const safe = (action: () => void | Promise<void>, budgetScope?: string) => {
     try {
       const result = action();
       if (result) {
         const control = operationControl(undefined, config.resourceTimeoutMs ?? 1000);
-        const completion = control.wait(Promise.resolve(result)).catch(() => { settlementFailures++; }).finally(() => { control.dispose(); settlements.delete(completion); });
+        const completion = control.wait(Promise.resolve(result))
+          .catch(() => { recordSettlementFailure(budgetScope); })
+          .finally(() => { control.dispose(); settlements.delete(completion); });
         settlements.add(completion);
       }
-    } catch { settlementFailures++; }
+    } catch { recordSettlementFailure(budgetScope); }
   };
   const begin = async (target: GatewayModelTarget, input: ModelGenerateInput, scope?: string, messageJsonLength?: number) => {
     const signal = input.abortSignal;
@@ -74,7 +115,7 @@ export const createGatewayExecutor = (config: GatewayConfig) => {
           } catch { /* Unknown usage retains its reservation. */ }
         }
         const held = reservation; reservation = undefined;
-        safe(() => started ? held.settle(amount) : held.cancel());
+        safe(() => started ? held.settle(amount) : held.cancel(), scope);
       }
     };
     const abort = () => { void finish(); };
@@ -88,13 +129,13 @@ export const createGatewayExecutor = (config: GatewayConfig) => {
         signal.throwIfAborted();
       }
       if (config.budget) {
-        if (settlementFailures || settlements.size >= 1024 || !scope?.trim()) throw new GatewayBudgetError();
+        if (!scope?.trim() || settlements.size >= 1024 || isScopeBlocked(scope)) throw new GatewayBudgetError();
         try { reservation = await config.budget.store.reserve({ scope, currency: config.budget.currency, amount: config.budget.reserveAmount, signal }); }
         catch { throw new GatewayBudgetError(); }
       }
       if (signal?.aborted) {
         const late = reservation; reservation = undefined;
-        if (late) safe(() => late.cancel());
+        if (late) safe(() => late.cancel(), scope);
         signal.throwIfAborted();
       }
       return { start() { signal?.throwIfAborted(); started = true; }, finish };

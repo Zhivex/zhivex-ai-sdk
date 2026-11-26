@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { connect } from "node:net";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { commandBaseName, resolveWorkspacePath } from "../src/paths.js";
 import { packTar, stripTarRoot, unpackTar } from "../src/tar.js";
@@ -81,6 +81,32 @@ describe("sandbox tar and docker stream framing", () => {
     expect(new TextDecoder().decode(result.stderr)).toBe("xyz");
     expect(result.truncated).toBe(true);
     expect(decodeCappedText(new TextEncoder().encode("abcdef"), 3)).toEqual({ text: "abc", truncated: true });
+  });
+
+  it("caps giant single frames incrementally and rejects truncated or unsupported tar entries", async () => {
+    const giantPayload = new Uint8Array(64 * 1024).fill(0x61);
+    const giantFrame = encodeDockerStreamFrame(1, giantPayload);
+    const smallStderr = encodeDockerStreamFrame(2, new TextEncoder().encode("err"));
+    const result = await readMultiplexedStream((async function* () {
+      yield giantFrame.subarray(0, 100);
+      yield giantFrame.subarray(100);
+      yield smallStderr;
+    })(), 16);
+    expect(result.stdout.byteLength).toBe(16);
+    expect(new TextDecoder().decode(result.stderr)).toBe("err");
+    expect(result.truncated).toBe(true);
+
+    const packed = packTar([{ path: "hello.txt", type: "file", content: new TextEncoder().encode("hello") }]);
+    expect(() => unpackTar(packed.subarray(0, 515))).toThrow(/truncated/);
+
+    const hardlink = new Uint8Array(packed);
+    hardlink[156] = "1".charCodeAt(0);
+    // Recompute tar checksum after modifying typeFlag.
+    hardlink.set(new TextEncoder().encode("        "), 148);
+    let sum = 0;
+    for (let i = 0; i < 512; i += 1) sum += hardlink[i] ?? 0;
+    hardlink.set(new TextEncoder().encode(`${sum.toString(8).padStart(6, "0")}\0 `), 148);
+    expect(() => unpackTar(hardlink)).toThrow(/Unsupported tar entry type/);
   });
 });
 
@@ -259,6 +285,34 @@ describe("sandbox network allowlist", () => {
     expect(idle).toBe("closed");
     await idleProxy.close();
     expect(await connectStatus(idleProxy.port, "example.test", port)).toBe(0);
+
+    const headLimitProxy = await startAllowlistProxy({
+      quotas: { maxConnections: 2, maxInFlight: 2, maxRequests: 4, maxBytes: 8, idleMs: 500, tunnelMs: 60_000 },
+      policy: { allowedDomains: ["example.test"], allowedPorts: [port], allowPrivateNetworks: true },
+      resolveHost: async () => ["127.0.0.1"]
+    });
+    const overQuotaResponse = await new Promise<string>(resolve => {
+      const socket = connect(headLimitProxy.port, "127.0.0.1");
+      let response = "";
+      socket.on("data", chunk => { response += chunk.toString("utf8"); });
+      socket.on("close", () => resolve(response));
+      socket.on("error", () => resolve(response));
+      socket.write(`CONNECT example.test:${port} HTTP/1.1\r\nHost: example.test:${port}\r\n\r\n${"x".repeat(32)}`);
+    });
+    expect(overQuotaResponse).toContain("403 Forbidden");
+    expect(overQuotaResponse).not.toContain("200 Connection Established");
+
+    const clearSpy = vi.spyOn(globalThis, "clearTimeout");
+    try {
+      expect(await connectStatus(headLimitProxy.port, "example.test", port)).toBe(200);
+      await delay(20);
+      // 1st clearTimeout for connect timeout, 2nd for tunnelTimer on close.
+      expect(clearSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
+    } finally {
+      clearSpy.mockRestore();
+      await headLimitProxy.close();
+    }
+
     await new Promise<void>(resolve => target.close(() => resolve()));
   });
 });

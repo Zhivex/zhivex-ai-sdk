@@ -535,7 +535,7 @@ class DeepSeekFIMClientImpl implements DeepSeekFIMClient {
         });
         await assertResponseOk(result, "FIM");
         return result;
-      }, input);
+      }, { ...input, abortSignal: signal });
     } catch (error) {
       cleanup();
       throw error;
