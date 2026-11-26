@@ -55,7 +55,12 @@
     "agents",
     "sdk",
     "llm",
-    "typescript"
+    "typescript",
+    "ai-agents",
+    "ai-governance",
+    "guardrails",
+    "human-in-the-loop",
+    "durable-agents"
   ],
   "publishConfig": {
     "access": "public"

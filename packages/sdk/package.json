@@ -98,7 +98,19 @@
     "sdk",
     "llm",
     "providers",
-    "typescript"
+    "typescript",
+    "ai-agents",
+    "ai-governance",
+    "guardrails",
+    "audit-log",
+    "human-in-the-loop",
+    "openai",
+    "anthropic",
+    "gemini",
+    "bedrock",
+    "mcp",
+    "tool-calling",
+    "structured-output"
   ],
   "publishConfig": {
     "access": "public"

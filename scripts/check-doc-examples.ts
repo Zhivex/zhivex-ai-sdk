@@ -15,6 +15,7 @@ try {
     { file: "packages/sdk/README.md", section: "## Quick Start" },
     { file: "packages/agents/README.md", section: "## Quick Start" },
     { file: "README.md", section: "## Quick Start" },
+    { file: "README.md", section: "### 2. Governance" },
     { file: "docs/QUICKSTART.md", section: "## 2. Get The First Response" },
     { file: "docs/QUICKSTART.md", section: "## 3. Add A Persistent Agent" }
   ];
