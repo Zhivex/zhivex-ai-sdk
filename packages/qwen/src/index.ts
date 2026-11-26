@@ -612,6 +612,25 @@ const jsonHeaders = (apiKey: string) => ({
   authorization: `Bearer ${apiKey}`
 });
 
+/**
+ * Applies the configured error-body limit before `withResponseRetry` reads a failed response.
+ * Its own limit argument only exists in newer core releases, and this package still supports older ones.
+ * Status and headers (including Retry-After) are kept so retry timing does not change.
+ */
+const withErrorBodyLimit = (operation: () => Promise<Response>, errorBodyBytes: number) => async () => {
+  const response = await operation();
+  if (response.ok) return response;
+  const headers = new Headers(response.headers);
+  headers.delete("content-length");
+  headers.delete("content-encoding");
+  const body = await readErrorBodyWithLimit(response, errorBodyBytes);
+  return new Response(response.status === 304 ? null : body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers
+  });
+};
+
 const parseJson = async (
   response: Response,
   options: {
@@ -2637,37 +2656,39 @@ class QwenTranscriptionModel implements TranscriptionModel {
     delete providerOptions.stream;
     try {
       const response = await withResponseRetry(
-        () =>
-          this.fetcher(`${this.baseURL}/chat/completions`, {
-            method: "POST",
-            headers: jsonHeaders(this.apiKey),
-            signal,
-            body: JSON.stringify({
-              model: this.modelId,
-              messages: [
-                {
-                  role: "user",
-                  content: [
-                    {
-                      type: "input_audio",
-                      input_audio: {
-                        data: toDataURL(input.audio.data, input.audio.mediaType)
+        withErrorBodyLimit(
+          () =>
+            this.fetcher(`${this.baseURL}/chat/completions`, {
+              method: "POST",
+              headers: jsonHeaders(this.apiKey),
+              signal,
+              body: JSON.stringify({
+                model: this.modelId,
+                messages: [
+                  {
+                    role: "user",
+                    content: [
+                      {
+                        type: "input_audio",
+                        input_audio: {
+                          data: toDataURL(input.audio.data, input.audio.mediaType)
+                        }
                       }
-                    }
-                  ]
+                    ]
+                  }
+                ],
+                stream: false,
+                asr_options: {
+                  ...providerOptions,
+                  ...nestedOptions,
+                  ...(input.language ? { language: input.language } : {})
                 }
-              ],
-              stream: false,
-              asr_options: {
-                ...providerOptions,
-                ...nestedOptions,
-                ...(input.language ? { language: input.language } : {})
-              }
-            })
-          }),
+              })
+            }),
+          this.responseLimits.errorBodyBytes
+        ),
         { ...input, abortSignal: signal },
-        "Qwen",
-        this.responseLimits.errorBodyBytes
+        "Qwen"
       );
       const json = await parseJson(response, {
         maxBytes: this.responseLimits.transcriptionBytes,
@@ -2725,24 +2746,26 @@ class QwenSpeechModel implements SpeechModel {
     const { signal, cleanup, abort } = withTimeoutSignal(input);
     try {
       const response = await withResponseRetry(
-        () =>
-          this.fetcher(`${this.taskBaseURL}/${endpoint}`, {
-            method: "POST",
-            headers: jsonHeaders(this.apiKey),
-            signal,
-            body: JSON.stringify({
-              model: this.modelId,
-              input: {
-                ...providerOptions,
-                ...nestedInput,
-                ...(isAudioGen ? { text_prompt: input.input } : { text: input.input, voice: input.voice ?? "Cherry" })
-              },
-              ...(parameters ? { parameters } : {})
-            })
-          }),
+        withErrorBodyLimit(
+          () =>
+            this.fetcher(`${this.taskBaseURL}/${endpoint}`, {
+              method: "POST",
+              headers: jsonHeaders(this.apiKey),
+              signal,
+              body: JSON.stringify({
+                model: this.modelId,
+                input: {
+                  ...providerOptions,
+                  ...nestedInput,
+                  ...(isAudioGen ? { text_prompt: input.input } : { text: input.input, voice: input.voice ?? "Cherry" })
+                },
+                ...(parameters ? { parameters } : {})
+              })
+            }),
+          this.responseLimits.errorBodyBytes
+        ),
         isAudioGen ? { ...input, maxRetries: 0, abortSignal: signal } : { ...input, abortSignal: signal },
-        "Qwen",
-        this.responseLimits.errorBodyBytes
+        "Qwen"
       );
       const json = await parseJson(response, {
         maxBytes: this.responseLimits.speechJsonBytes,
