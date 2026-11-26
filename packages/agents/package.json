@@ -1,6 +1,6 @@
 {
   "name": "@zhivex-ai/agents",
-  "version": "1.13.0",
+  "version": "1.13.1",
   "description": "Agent-first facade for the Zhivex AI SDK runtime.",
   "license": "MIT",
   "type": "module",
@@ -55,12 +55,17 @@
     "agents",
     "sdk",
     "llm",
-    "typescript"
+    "typescript",
+    "ai-agents",
+    "ai-governance",
+    "guardrails",
+    "human-in-the-loop",
+    "durable-agents"
   ],
   "publishConfig": {
     "access": "public"
   },
   "dependencies": {
-    "@zhivex-ai/core": "^1.38.0"
+    "@zhivex-ai/core": "^1.41.1"
   }
 }

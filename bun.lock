@@ -42,9 +42,9 @@
     },
     "packages/agents": {
       "name": "@zhivex-ai/agents",
-      "version": "1.13.0",
+      "version": "1.13.1",
       "dependencies": {
-        "@zhivex-ai/core": "^1.38.0",
+        "@zhivex-ai/core": "^1.41.1",
       },
     },
     "packages/anthropic": {
@@ -75,7 +75,7 @@
     },
     "packages/core": {
       "name": "@zhivex-ai/core",
-      "version": "1.41.0",
+      "version": "1.41.1",
       "dependencies": {
         "ws": "^8.22.1",
         "zod": "^4.6.7",
@@ -192,12 +192,12 @@
     },
     "packages/sdk": {
       "name": "@zhivex-ai/sdk",
-      "version": "1.41.0",
+      "version": "1.41.1",
       "bin": {
         "zhivex-ai": "dist/cli.js",
       },
       "dependencies": {
-        "@zhivex-ai/core": "~1.41.0",
+        "@zhivex-ai/core": "~1.41.1",
       },
     },
     "packages/trace-viewer": {

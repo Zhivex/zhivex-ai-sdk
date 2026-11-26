@@ -1,6 +1,6 @@
 {
   "name": "@zhivex-ai/sdk",
-  "version": "1.41.0",
+  "version": "1.41.1",
   "description": "Unified high-level SDK for multi-provider AI workflows.",
   "license": "MIT",
   "type": "module",
@@ -98,12 +98,24 @@
     "sdk",
     "llm",
     "providers",
-    "typescript"
+    "typescript",
+    "ai-agents",
+    "ai-governance",
+    "guardrails",
+    "audit-log",
+    "human-in-the-loop",
+    "openai",
+    "anthropic",
+    "gemini",
+    "bedrock",
+    "mcp",
+    "tool-calling",
+    "structured-output"
   ],
   "publishConfig": {
     "access": "public"
   },
   "dependencies": {
-    "@zhivex-ai/core": "~1.41.0"
+    "@zhivex-ai/core": "~1.41.1"
   }
 }

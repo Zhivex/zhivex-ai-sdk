@@ -13,6 +13,7 @@ Guides for adopting the SDK. The [provider compatibility matrix](./reference/PRO
 - [AI SDK UI compatibility](./AI_SDK_UI_COMPAT.md) (beta) and the optional [model resolver](./MODEL_RESOLVER.md)
 - [Gateway routing](./GATEWAY.md)
 - [Computer use](./COMPUTER_USE.md), [portable Decisions](./DECISIONS.md), and [GPT-Live](./OPENAI_LIVE.md)
+- [Model and provider updates](./MODEL_UPDATES.md)
 - [React package](../packages/react/README.md) and [runnable examples](../examples/README.md)
 
 ## Extended API recipes

@@ -152,3 +152,24 @@ native Qwen API and language routing retain their previous contracts. Automatic
 chat/Code model selection is out of scope.
 
 Release preparation uses the feature changeset and the repository's `updateInternalDependencies: "patch"` policy to raise OpenAI, Qwen and Gateway's Core dependency floors to the new Core version that exports the Decisions helpers. An offline temporary-workspace regression test checks the resulting manifests; feature branches do not pre-bump published versions.
+
+## Gemini multimodal decisions
+
+Gemini Decisions evaluates closed questions over text, images, audio, video and
+PDF through the shared `DecisionModel` contract:
+
+```ts
+import { createGemini } from "@zhivex-ai/gemini";
+
+const result = await createGemini().decisionModel().decide({
+  input: [{ type: "document", uri: "https://example.com/invoice.pdf", mimeType: "application/pdf" }],
+  questions: { invoice: { type: "predicate", instructions: "Is this an invoice?" } }
+});
+console.log(result.answers.invoice);
+```
+
+Install `@zhivex-ai/gemini` and set `GEMINI_API_KEY`; replace the URL with your
+own accessible document. This uses `gemini-decision-1` on the Decisions endpoint.
+OpenAI and Qwen also expose decision surfaces, with provider-specific input
+capabilities. The gateway supports explicit decision routing and fallback.
+See [Gemini Decisions examples and limits](../packages/gemini/README.md#decisions-api).
