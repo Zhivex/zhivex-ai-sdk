@@ -122,7 +122,7 @@ prefixes structurally with an exact `JSON.stringify` fallback for values outside
 plain JSON data. Stored state shapes, validation, revisions, and public APIs are
 unchanged.
 
-Measured locally with Node 22.23.5 against baseline commit
+The following measurements were taken before the serialized-state and history-comparison regression fixes, with Node 22.23.5 against baseline commit
 `d0667bfea53aa22f87373cab0371ccd2c74209a9`. Each step returns one tool call
 whose result is a 4 KiB string; the run ends after the configured number of
 steps. Each case uses one warmup and the median of three samples. No provider
@@ -136,6 +136,11 @@ calls are made.
 | In-memory | 50 | 934.0 ms | 540.9 ms | 1.7× faster |
 | In-memory | 100 | 3,976.6 ms | 1,807.4 ms | 2.2× faster |
 | In-memory | 200 | 17,325.6 ms | 7,880.1 ms | 2.2× faster |
+
+After adding validation of the serialized checkpoint and handling getters,
+raw JSON, and proxies in history comparisons, the 100-step case was repeated
+on Node 24.19.0 against the same baseline. The median fell from 157.3 ms to
+78.0 ms without a store and from 3,885.6 ms to 1,798.7 ms with the in-memory store.
 
 Full-state checkpoints still copy the whole run state on every step, so total
 work grows with the square of the step count. Use compaction or offload large

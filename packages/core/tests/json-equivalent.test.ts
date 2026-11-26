@@ -46,6 +46,34 @@ describe("jsonEquivalent", () => {
     expect(() => jsonEquivalent({ big: 1n }, { big: 1n })).toThrow(TypeError);
   });
 
+  it("keeps raw JSON distinct from an object describing its source", () => {
+    const raw = JSON.rawJSON("1");
+    const message = (value: { rawJSON: string }): ModelMessage => ({
+      role: "assistant",
+      parts: [{ type: "tool-call", toolCall: { id: "c1", name: "inspect", input: { value } } }]
+    });
+    expect(messagePrefixLength([message(raw)], [message({ rawJSON: "1" })])).toBe(0);
+    expect(jsonEquivalent([raw], [1])).toBe(true);
+  });
+
+  it("reads getters exactly once, including array elements", () => {
+    for (const array of [false, true]) {
+      let reads = 0;
+      const left = Object.defineProperty(array ? [] : {}, array ? "0" : "text", {
+        enumerable: true, get: () => ++reads === 1 ? "before" : "after"
+      });
+      expect(jsonEquivalent(left, array ? ["after"] : { text: "after" })).toBe(false);
+      expect(reads).toBe(1);
+    }
+  });
+
+  it("uses the serialized values of proxies", () => {
+    const value = new Proxy({ text: "stored" }, {
+      get: (target, key) => key === "text" ? "visible" : Reflect.get(target, key)
+    });
+    expect(jsonEquivalent(value, { text: "stored" })).toBe(false);
+  });
+
   it("keeps messagePrefixLength results unchanged", () => {
     const history: ModelMessage[] = [
       { role: "user", parts: [{ type: "text", text: "a".repeat(4096) }] },

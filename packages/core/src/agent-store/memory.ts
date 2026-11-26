@@ -14,6 +14,7 @@ import type {
 import {
   scopedKey,
   matchesScope,
+  sameScope,
   journalKey as canonicalJournalKey,
   resolveScope,
   cloneState,
@@ -29,10 +30,16 @@ import {
   defaultMemoryMessages
 } from "./shared.js";
 
-// `normalized` is already a fresh validated copy and resolveScope validated the
-// scope, so only the scope needs copying before the state is retained.
-const withStoredScope = (normalized: AgentRunState, scope: AgentStoreScope | undefined): AgentRunState =>
-  scope ? { ...normalized, scope: JSON.parse(JSON.stringify(scope)) as AgentStoreScope } : normalized;
+const withStoredScope = (normalized: AgentRunState, scope: AgentStoreScope | undefined): AgentRunState => {
+  if (!scope) return normalized;
+  // An operation scope is already part of the validated snapshot. A store
+  // default still needs to be copied before it can be retained.
+  const storedScope = normalized.scope ?? (JSON.parse(JSON.stringify(scope)) as AgentStoreScope);
+  if (!storedScope || !sameScope(scope, storedScope)) {
+    throw new ValidationError("Serialized agent run scope differs from the operation scope.");
+  }
+  return { ...normalized, scope: storedScope };
+};
 
 const cloneMessages = (messages: ModelMessage[]): ModelMessage[] =>
   JSON.parse(JSON.stringify(messages)) as ModelMessage[];
@@ -92,7 +99,7 @@ export const createInMemoryAgentRunStore = (options: AgentRunStoreScopeOptions =
       if (states.has(key)) {
         throw new ConflictError("Agent run identity already exists.");
       }
-      const stored = cloneState({ ...normalized, ...(scope ? { scope } : {}) });
+      const stored = withStoredScope(normalized, scope);
       states.set(key, stored);
       idempotencyKeys.set(idempotencyKey(state.idempotencyKey, scope), key);
       if (normalized.parentRunId) {
