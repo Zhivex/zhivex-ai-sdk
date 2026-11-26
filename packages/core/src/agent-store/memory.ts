@@ -14,6 +14,7 @@ import type {
 import {
   scopedKey,
   matchesScope,
+  sameScope,
   journalKey as canonicalJournalKey,
   resolveScope,
   cloneState,
@@ -28,6 +29,17 @@ import {
   defaultMemoryKey,
   defaultMemoryMessages
 } from "./shared.js";
+
+const withStoredScope = (normalized: AgentRunState, scope: AgentStoreScope | undefined): AgentRunState => {
+  if (!scope) return normalized;
+  // An operation scope is already part of the validated snapshot. A store
+  // default still needs to be copied before it can be retained.
+  const storedScope = normalized.scope ?? (JSON.parse(JSON.stringify(scope)) as AgentStoreScope);
+  if (!storedScope || !sameScope(scope, storedScope)) {
+    throw new ValidationError("Serialized agent run scope differs from the operation scope.");
+  }
+  return { ...normalized, scope: storedScope };
+};
 
 const cloneMessages = (messages: ModelMessage[]): ModelMessage[] =>
   JSON.parse(JSON.stringify(messages)) as ModelMessage[];
@@ -58,7 +70,7 @@ export const createInMemoryAgentRunStore = (options: AgentRunStoreScopeOptions =
     reconciliationFencing: true,
     load(runId, scope) {
       const state = states.get(runKey(runId, scope));
-      return state ? cloneState(normalizeAgentRunState(state)) : undefined;
+      return state ? cloneState(state) : undefined;
     },
     findByIdempotencyKey(idempotencyKeyValue, scope) {
       const runId = idempotencyKeys.get(idempotencyKey(idempotencyKeyValue, scope));
@@ -66,12 +78,12 @@ export const createInMemoryAgentRunStore = (options: AgentRunStoreScopeOptions =
         return undefined;
       }
       const state = states.get(runId);
-      return state ? cloneState(normalizeAgentRunState(state)) : undefined;
+      return state ? cloneState(state) : undefined;
     },
     findByParentRunId(parentRunId, scope) {
       return [...(parentRunIds.get(scopedKey(resolveScope(options.scope, scope), parentRunId)) ?? [])].flatMap((runId) => {
         const state = states.get(runId);
-        return state ? [cloneState(normalizeAgentRunState(state))] : [];
+        return state ? [cloneState(state)] : [];
       });
     },
     claimIdempotencyKey(state) {
@@ -87,7 +99,7 @@ export const createInMemoryAgentRunStore = (options: AgentRunStoreScopeOptions =
       if (states.has(key)) {
         throw new ConflictError("Agent run identity already exists.");
       }
-      const stored = cloneState({ ...normalized, ...(scope ? { scope } : {}) });
+      const stored = withStoredScope(normalized, scope);
       states.set(key, stored);
       idempotencyKeys.set(idempotencyKey(state.idempotencyKey, scope), key);
       if (normalized.parentRunId) {
@@ -111,7 +123,7 @@ export const createInMemoryAgentRunStore = (options: AgentRunStoreScopeOptions =
           throw new ConflictError("AgentRunState idempotency key conflict.");
         }
       }
-      const stored = cloneState({ ...normalized, ...(scope ? { scope } : {}) });
+      const stored = withStoredScope(normalized, scope);
       removeParentIndex(current);
       states.set(runKey(normalized.runId, scope), stored);
       if (normalized.idempotencyKey) idempotencyKeys.set(idempotencyKey(normalized.idempotencyKey, scope), runKey(normalized.runId, scope));

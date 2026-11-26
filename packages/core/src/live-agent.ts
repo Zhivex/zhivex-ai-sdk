@@ -45,8 +45,9 @@ const cloneMetadata = (...values: Array<Record<string, JsonValue> | undefined>) 
   return Object.keys(merged).length ? merged : undefined;
 };
 
-const cloneState = (state: AgentRunState): AgentRunState =>
-  JSON.parse(JSON.stringify(normalizeAgentRunState(state))) as AgentRunState;
+// normalizeAgentRunState validates and returns a fresh JSON-compatible deep
+// copy, so a second JSON round trip would only repeat the same work.
+const cloneState = (state: AgentRunState): AgentRunState => normalizeAgentRunState(state);
 
 const createBaseState = (
   provider: string,

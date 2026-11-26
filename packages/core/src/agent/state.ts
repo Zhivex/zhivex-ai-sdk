@@ -121,8 +121,10 @@ export const saveStateWithRevision = async (store: AgentRunStore, state: AgentRu
   const expectedRevision = state.revision ?? 0;
   const nextRevision = expectedRevision + 1;
   const nextState = { ...state, revision: nextRevision } satisfies AgentRunState;
+  // A serialized checkpoint always comes from a normalized state, so parsing it
+  // again yields an independent confirmed copy without another validation pass.
   const payload = serializedNextState === undefined ? cloneState(nextState) : JSON.parse(serializedNextState) as AgentRunState;
-  const confirmed = cloneState(payload);
+  const confirmed = serializedNextState === undefined ? cloneState(payload) : JSON.parse(serializedNextState) as AgentRunState;
   await store.save(payload, { expectedRevision });
   state.revision = nextRevision;
   confirmedCheckpoints.set(state, { store, state: confirmed });

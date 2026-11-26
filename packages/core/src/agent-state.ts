@@ -384,7 +384,7 @@ const childRun = (value: unknown, path: string) => {
   }
   if (current.resumeState !== undefined) {
     jsonValue(current.resumeState, `${path}.resumeState`, true);
-    normalizeAgentRunState(current.resumeState);
+    validateAgentRunState(current.resumeState);
   }
 };
 
@@ -451,7 +451,7 @@ const taskOutcome = (value: unknown, path: string) => {
   });
 };
 
-export const normalizeAgentRunState = (value: unknown): AgentRunState => {
+const validateAgentRunState = (value: unknown) => {
   const state = record(value, "payload");
   if (state.schemaVersion !== undefined && state.schemaVersion !== AGENT_RUN_STATE_SCHEMA_VERSION) {
     if (typeof state.schemaVersion === "number" && state.schemaVersion > AGENT_RUN_STATE_SCHEMA_VERSION) {
@@ -579,10 +579,19 @@ export const normalizeAgentRunState = (value: unknown): AgentRunState => {
   if (state.cancellationCascade !== undefined && typeof state.cancellationCascade !== "boolean") invalid("cancellationCascade", "must be a boolean");
   if (state.error !== undefined) agentRunError(state.error, "error");
 
+  return state;
+};
+
+export const normalizeAgentRunState = (value: unknown): AgentRunState => {
+  // Validate the input as well as the exact durable representation: JSON
+  // can coerce invalid numbers, omit inherited fields, or invoke toJSON.
+  const input = validateAgentRunState(value);
+  const state = cloneJson(input) as unknown as AgentRunState;
+  validateAgentRunState(state);
   return {
-    ...cloneJson(state as unknown as AgentRunState),
+    ...state,
     schemaVersion: AGENT_RUN_STATE_SCHEMA_VERSION,
-    revision: (state.revision as number | undefined) ?? 0
+    revision: state.revision ?? 0
   };
 };
 

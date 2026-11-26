@@ -15,8 +15,9 @@ import type {
   ModelMessage
 } from "../types.js";
 
-export const cloneState = (state: AgentRunState): AgentRunState =>
-  JSON.parse(JSON.stringify(normalizeAgentRunState(state))) as AgentRunState;
+// normalizeAgentRunState validates and returns a fresh JSON-compatible deep
+// copy, so a second JSON round trip would only repeat the same work.
+export const cloneState = (state: AgentRunState): AgentRunState => normalizeAgentRunState(state);
 
 export const cloneJournalEntry = (entry: AgentToolCallJournalEntry): AgentToolCallJournalEntry =>
   JSON.parse(JSON.stringify(entry)) as AgentToolCallJournalEntry;

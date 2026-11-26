@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   createAgentHandoff,
+  createInMemoryAgentRunStore,
   createTextMessage,
   migrateAgentRunState,
   normalizeAgentRunState,
@@ -96,6 +97,32 @@ const validState = (): AgentRunState => ({
 });
 
 describe("agent run state validation", () => {
+  it("rejects a configured store scope that serializes to a different tenant", async () => {
+    const scope = { tenantId: "original", toJSON: () => ({ tenantId: "different" }) };
+    const store = createInMemoryAgentRunStore({ scope });
+    const state = { ...validState(), scope: undefined };
+    await expect(async () => store.save(state)).rejects.toThrow(/scope/i);
+    await expect(async () => store.claimIdempotencyKey!({ ...state, idempotencyKey: "claim" })).rejects.toThrow(/scope/i);
+    expect(await store.findByIdempotencyKey!("claim")).toBeUndefined();
+    expect(await store.load(state.runId)).toBeUndefined();
+  });
+
+  it("preserves the last revision and indexes if a message loses its role in JSON", async () => {
+    const store = createInMemoryAgentRunStore();
+    const previous = { ...validState(), parentRunId: "original" };
+    await store.save(previous);
+    class Message {
+      get role() { return "user" as const; }
+      parts = createTextMessage("user", "updated").parts;
+    }
+    const next = { ...previous, messages: [new Message()], parentRunId: "replacement", idempotencyKey: "replacement" };
+    await expect(async () => store.save(next, { expectedRevision: previous.revision })).rejects.toThrow(/messages\[0\]\.role/);
+    expect(await store.load(previous.runId, previous.scope)).toEqual(previous);
+    expect(await store.findByParentRunId!("original", previous.scope)).toEqual([previous]);
+    expect(await store.findByParentRunId!("replacement", previous.scope)).toEqual([]);
+    expect(await store.findByIdempotencyKey!("replacement", previous.scope)).toBeUndefined();
+  });
+
   it("preserves a cache write lifetime split and rejects a negative counter", () => {
     const state = validState();
     state.usage = {
